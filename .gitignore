@@ -1,0 +1,29 @@
+node_modules/
+*.log
+.claude/settings.local.json
+
+# Sensitive configuration and authentication
+config.json
+auth_state/
+.env
+*.env
+
+# Logs and temporary files
+logs/
+*.log
+
+# Personal snapshots and temp files
+*-snapshot.md
+*-snap.md
+gmail-*.md
+nul
+
+# Workspace artifacts: keep folder shells, ignore contents
+bot/outputs/**
+!bot/outputs/.gitkeep
+pepperv1/backend/bot/logs/**
+!pepperv1/backend/bot/logs/.gitkeep
+pepperv1/backend/bot/memory/knowledge/**
+!pepperv1/backend/bot/memory/knowledge/.gitkeep
+pepperv1/backend/bot/memory/preferences/**
+!pepperv1/backend/bot/memory/preferences/.gitkeep

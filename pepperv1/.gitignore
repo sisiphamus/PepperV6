@@ -1,0 +1,17 @@
+node_modules/
+backend/auth_state/
+backend/config.json
+backend/bot/logs/**
+!backend/bot/logs/.gitkeep
+backend/bot/conversations.json
+backend/bot/.playwright-mcp/
+backend/.playwright-mcp/
+backend/bot/memory/short-term/
+backend/bot/memory/knowledge/**
+!backend/bot/memory/knowledge/.gitkeep
+backend/bot/memory/preferences/**
+!backend/bot/memory/preferences/.gitkeep
+backend/bot/outputs/**
+!backend/bot/outputs/.gitkeep
+*.log
+backend\bot\memory\preferences\chrome-profiles.md

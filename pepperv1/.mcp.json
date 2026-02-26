@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "playwright": {
+      "command": "npx",
+      "args": [
+        "@playwright/mcp@latest",
+        "--browser", "msedge",
+        "--cdp-endpoint", "http://localhost:9222",
+        "--timeout-navigation", "10000",
+        "--timeout-action", "5000"
+      ]
+    }
+  }
+}
