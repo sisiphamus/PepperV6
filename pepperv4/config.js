@@ -10,7 +10,7 @@ const CONFIG_PATH = join(__dirname, '..', 'pepperv1', 'backend', 'config.json');
 
 const defaults = {
   port: 3457,
-  allowedNumbers: [18032920205],
+  allowedNumbers: [],
   allowAllNumbers: false,
   claudeCommand: 'claude',
   claudeArgs: ['--print'],
@@ -22,7 +22,7 @@ const defaults = {
   codeWorkingDirectory: process.cwd(),
   prefix: '!claude ',
   authDir: join(__dirname, '..', 'pepperv1', 'backend', 'auth_state'),
-  telegramToken: '8588798112:AAGq_cTWMfd3HyQErQVUeMnVFitmcHWbhgM',
+  telegramToken: '',
   telegramPrefix: '',
   telegramAllowedIds: [],
   smsGatewayUrl: '',
