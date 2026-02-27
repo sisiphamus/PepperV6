@@ -1,45 +1,25 @@
 # PepperV5
 
-The fifth generation of Pepper, my AI personal assistant that lives on my phone and runs my digital life.
+What if the expensive parts of the pipeline didn't need to be expensive?
 
-PepperV5 takes the multi-model orchestration pipeline from earlier versions and makes it faster and cheaper by replacing two Claude API calls with local machine learning models. Messages come in through WhatsApp, Telegram, SMS, or the web dashboard. A trained TF-IDF classifier instantly categorizes the task. A second local model retrieves relevant memories. Only then does Claude step in to actually execute.
+Pepper-3 used Claude for everything -- including task classification and memory retrieval, which are fundamentally *pattern matching* problems. V5 replaces those two phases with local ML models that run in milliseconds instead of seconds, for free instead of dollars.
 
-## How It Works
+**Phase A -- Classification:** TF-IDF + Logistic Regression. Trained on accumulated task data. Tells the system what kind of request it's looking at. ~80ms.
+
+**Phase B -- Memory retrieval:** TF-IDF keyword matching against stored knowledge. Finds relevant context without an API call. ~20ms.
+
+**Phase C onward:** Claude handles execution -- the part that actually requires reasoning.
+
+The ML models run in a persistent Python subprocess that stays warm between requests. Communication is newline-delimited JSON over stdin/stdout. No HTTP overhead, no cold starts, no serialization libraries. Just pipes.
 
 ```
-You (WhatsApp/Telegram/SMS/Web)
-        |
-  Phase A - Local ML classifier (scikit-learn, not Claude)
-        |
-  Phase B - Local TF-IDF memory retrieval
-        |
-  Phase C - Teacher (Claude Sonnet, only if knowledge gaps exist)
-        |
-  Phase D - Executor (Claude, does the actual work)
-        |
-  Learner - Saves what it learned for next time
+pepperv4/ml/          training scripts, models, inference server
+pepperv4/ml/models/   serialized TF-IDF vectorizers + classifiers
 ```
 
-The local ML layer means Phase A and B respond in milliseconds instead of seconds, and cost nothing per request.
+The routine work (classification, retrieval) doesn't need frontier models. Save those for where they matter. Two API calls became two local inferences -- faster, cheaper, and honestly more reliable for these specific tasks.
 
-## The ML Stack
-
-- **Task Classifier**: TF-IDF vectorizer + Logistic Regression, trained on labeled message history. Classifies into: text response, image generation, shell command, presentation, file operation, or other
-- **Memory Retriever**: TF-IDF keyword matching against the knowledge base, pulling relevant context before any LLM call
-- **Inference Server**: Persistent Python subprocess communicating via newline-delimited JSON over stdin/stdout. Stays warm between requests for sub-100ms classification
-
-## Architecture
-
-- `pepperv4/` - The orchestration pipeline with ML integration
-- `pepperv4/ml/` - Training scripts, inference server, saved models
-- `pepperv4/pipeline/` - Orchestrator, model runner, ML runner
-- `pepperv1/` - The battle-tested backend handling all messaging platforms
-- `bot/` - Claude's working directory and output files
-
-## Tech
-
-Node.js, Python (scikit-learn), Claude CLI, Express, Socket.IO, Baileys (WhatsApp), Telegram Bot API
-
-## Context
-
-This is part of a larger evolution: Pepper (v0) -> pepperv1 -> Pepper2 -> Pepper-3 -> PepperV5 -> Overthink. Each version adds a new layer of intelligence. V5's contribution is proving that local ML can handle the routine classification work, saving the expensive models for where they actually matter.
+```bash
+pip install scikit-learn joblib numpy
+cd pepperv1/backend && npm install && node server.js
+```
