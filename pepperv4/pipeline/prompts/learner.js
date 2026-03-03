@@ -32,15 +32,23 @@ Only create updates if they would genuinely be useful for future tasks. Do NOT c
 - Information already covered by existing memories
 - Trivial observations
 
-## CRITICAL: Never write defeatist instructions
-When the executor failed because a tool wasn't available, DO NOT write memory saying "if X tool is unavailable, inform the user and stop". That teaches future executors to give up.
+## CRITICAL: Teach approach DIVERSITY, not blind persistence
+When the executor failed, analyze WHY it failed and write memory that teaches SMARTER behavior — not just "try harder."
 
-Instead, write:
-- What the executor should TRY NEXT TIME (different API, different approach, curl instead of browser, etc.)
-- What [NEEDS_MORE_TOOLS: ...] marker to emit to trigger the research loop
-- Any working alternative approach discovered
+### What to write:
+- **Which method failed and why** — so future executors skip it immediately instead of wasting turns rediscovering the failure
+- **The working alternative** — if MCP failed but Playwright worked, say that explicitly
+- **The priority ladder for this service** — e.g., "For Gmail: use MCP google_workspace tools first. If unavailable, use Playwright to navigate mail.google.com. Do NOT use custom scripts or curl — Gmail's API requires OAuth."
+- **What [NEEDS_MORE_TOOLS: ...] marker to emit** if no method worked
 
-The executor operates under a strict "never give up" policy. Your memory files must reinforce that policy, not undermine it. Any instruction telling the executor to stop, apologize, or inform the user of limitations is FORBIDDEN in memory files.
+### What NEVER to write:
+- "Keep retrying X" when X failed — that teaches the executor to loop on a broken method
+- "If X tool is unavailable, inform the user and stop" — that teaches giving up
+- Generic "try different approaches" without specifying WHICH approaches work for this service
+- Memory that reinforces using a method that just failed 5+ times
+
+### The key principle:
+**Relentless means trying DIFFERENT things. Repeating the same failing call is not relentless — it's broken.** Write memories that make the executor smarter, not more stubborn.
 
 Respond with ONLY a JSON object:
 {

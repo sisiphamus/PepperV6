@@ -1,6 +1,7 @@
-import { readFileSync, writeFileSync, existsSync } from 'fs';
+import { readFileSync, writeFileSync, renameSync, existsSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
+import { randomBytes } from 'crypto';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const CONVERSATIONS_PATH = join(__dirname, '..', 'bot', 'memory', 'conversations.json');
@@ -18,8 +19,21 @@ export function loadConversations() {
   }
 }
 
+let saveTimer = null;
+const SAVE_DEBOUNCE_MS = 500;
+
 function save() {
-  writeFileSync(CONVERSATIONS_PATH, JSON.stringify(conversations, null, 2));
+  // Debounce to coalesce rapid concurrent updates.
+  // In-memory state is always up-to-date; disk persistence is eventual.
+  if (saveTimer) clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => {
+    try {
+      const tmpPath = CONVERSATIONS_PATH + `.tmp.${randomBytes(4).toString('hex')}`;
+      writeFileSync(tmpPath, JSON.stringify(conversations, null, 2));
+      renameSync(tmpPath, CONVERSATIONS_PATH);
+    } catch {}
+    saveTimer = null;
+  }, SAVE_DEBOUNCE_MS);
 }
 
 /**

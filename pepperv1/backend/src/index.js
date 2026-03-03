@@ -10,11 +10,12 @@ import { config, saveConfig, loadConfig } from './config.js';
 import { startWhatsApp, setSocketIO, getStatus, getLastQR } from './whatsapp-client.js';
 import { startTelegram, setTelegramSocketIO } from './telegram/bot.js';
 import { startSmsGateway, setSmsSocketIO, handleIncomingSms } from './sms/gateway.js';
-import { execFile } from 'child_process';
+import { execFile, execFileSync } from 'child_process';
 import { executeClaudePrompt, killProcess, codeAgentOptions, getActiveProcessSummary, setProcessChangeListener, setProcessActivityListener, clearClarificationState } from './claude-bridge.js';
 import { parseMessage, resolveSession, createOrUpdateConversation, closeConversation, listConversations, getConversationMode } from './conversation-manager.js';
 import { assertRuntimeBridgeReady, createRuntimeAwareProgress, getRuntimeHealthStatus, getRuntimeStatusPayload } from './runtime-health.js';
 import { extractImages } from './transport-utils.js';
+import { createSession, closeSession, listActiveSessions, cleanupOrphanedSessionDirs } from '../../../pepperv4/session/session-manager.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const SHORT_TERM_DIR = join(__dirname, '..', 'bot', 'memory', 'short-term');
@@ -33,6 +34,19 @@ app.use(express.static(join(__dirname, '..', '..', 'frontend'), {
 }));
 
 // API routes
+app.get('/api/health/claude', (_req, res) => {
+  try {
+    const out = execFileSync('claude', ['--version'], { shell: true, timeout: 10000, encoding: 'utf-8' });
+    res.json({ ok: true, version: out.trim() });
+  } catch (err) {
+    if (err.code === 'ENOENT' || (err.message && err.message.includes('not recognized'))) {
+      res.json({ ok: false, error: 'not_found' });
+    } else {
+      res.json({ ok: false, error: 'unknown', detail: err.message });
+    }
+  }
+});
+
 app.get('/api/status', (_req, res) => {
   res.json({ status: getStatus(), ...getRuntimeStatusPayload() });
 });
@@ -214,6 +228,24 @@ app.get('/api/conversations/:sessionId', (req, res) => {
   });
 });
 
+// Session isolation API endpoints
+app.get('/api/sessions', (_req, res) => {
+  res.json(listActiveSessions());
+});
+
+app.delete('/api/sessions/:id', (req, res) => {
+  const id = req.params.id;
+  const sessions = listActiveSessions();
+  const session = sessions.find(s => s.id === id);
+  if (session) {
+    killProcess(session.processKey);
+    closeSession(id);
+    res.json({ ok: true });
+  } else {
+    res.status(404).json({ error: 'Session not found' });
+  }
+});
+
 // Web chat session tracking
 const SESSION_TIMEOUT_MS = 10 * 60 * 1000;
 let webSession = { sessionId: null, lastActivity: 0 };
@@ -336,14 +368,15 @@ io.on('connection', async (socket) => {
       resumeSessionId = webSession.sessionId;
     }
 
-    // Save image to disk if present
+    // Save image to disk if present (session-scoped directory)
     let finalPrompt = parsed.body;
     if (imageBase64) {
       try {
-        mkdirSync(SHORT_TERM_DIR, { recursive: true });
+        const imageDir = session.shortTermDir;
+        mkdirSync(imageDir, { recursive: true });
         const ext = imageMime.includes('png') ? 'png' : 'jpg';
         const filename = `web_${randomBytes(4).toString('hex')}.${ext}`;
-        const filepath = join(SHORT_TERM_DIR, filename);
+        const filepath = join(imageDir, filename);
         writeFileSync(filepath, Buffer.from(imageBase64, 'base64'));
         const caption = finalPrompt || 'What is this image?';
         finalPrompt = `[The user sent an image. Read it with your Read tool at: ${filepath}]\n\n${caption}`;
@@ -357,6 +390,10 @@ io.on('connection', async (socket) => {
     const isKnownCode = parsed.number !== null && getConversationMode(parsed.number) === 'code';
     // Track current sessionId for progress events (starts with resume or client-provided)
     let currentSessionId = resumeSessionId || clientSessionId || null;
+
+    // Create an isolated session for this execution
+    const session = createSession(processKey, 'web');
+    io.emit('session_created', { id: session.id, processKey, transport: 'web' });
 
     try {
       const progressWrapper = createRuntimeAwareProgress((type, data) => {
@@ -375,14 +412,14 @@ io.on('connection', async (socket) => {
       let execResult;
       let didDelegate = false;
       if (isKnownCode) {
-        execResult = await executeClaudePrompt(finalPrompt, codeAgentOptions({ onProgress, resumeSessionId, processKey, clarificationKey: processKey }));
+        execResult = await executeClaudePrompt(finalPrompt, codeAgentOptions({ onProgress, resumeSessionId, processKey, clarificationKey: processKey, sessionContext: session }));
       } else {
-        execResult = await executeClaudePrompt(finalPrompt, { onProgress, resumeSessionId, processKey, clarificationKey: processKey, detectDelegation: true });
+        execResult = await executeClaudePrompt(finalPrompt, { onProgress, resumeSessionId, processKey, clarificationKey: processKey, detectDelegation: true, sessionContext: session });
         if (execResult.delegation) {
           didDelegate = true;
           io.emit('log', { type: 'delegation', data: { sender: 'web', employee: 'coder', model: execResult.delegation.model }, timestamp: new Date().toISOString() });
           socket.emit('chat_progress', { type: 'delegation', data: { employee: 'coder', model: execResult.delegation.model }, sessionId: currentSessionId, messageId });
-          execResult = await executeClaudePrompt(finalPrompt, codeAgentOptions({ onProgress, processKey, clarificationKey: processKey }, execResult.delegation.model));
+          execResult = await executeClaudePrompt(finalPrompt, codeAgentOptions({ onProgress, processKey, clarificationKey: processKey, sessionContext: session }, execResult.delegation.model));
         }
       }
       if (execResult.status === 'needs_user_input') {
@@ -439,13 +476,13 @@ io.on('connection', async (socket) => {
           let execResult;
           let didDelegate = false;
           if (isKnownCode) {
-            execResult = await executeClaudePrompt(finalPrompt, codeAgentOptions({ onProgress, processKey, clarificationKey: processKey }));
+            execResult = await executeClaudePrompt(finalPrompt, codeAgentOptions({ onProgress, processKey, clarificationKey: processKey, sessionContext: session }));
           } else {
-            execResult = await executeClaudePrompt(finalPrompt, { onProgress, processKey, clarificationKey: processKey, detectDelegation: true });
+            execResult = await executeClaudePrompt(finalPrompt, { onProgress, processKey, clarificationKey: processKey, detectDelegation: true, sessionContext: session });
             if (execResult.delegation) {
               didDelegate = true;
               socket.emit('chat_progress', { type: 'delegation', data: { employee: 'coder', model: execResult.delegation.model }, sessionId: currentSessionId, messageId });
-              execResult = await executeClaudePrompt(finalPrompt, codeAgentOptions({ onProgress, processKey, clarificationKey: processKey }, execResult.delegation.model));
+              execResult = await executeClaudePrompt(finalPrompt, codeAgentOptions({ onProgress, processKey, clarificationKey: processKey, sessionContext: session }, execResult.delegation.model));
             }
           }
           if (execResult.status === 'needs_user_input') {
@@ -492,6 +529,10 @@ io.on('connection', async (socket) => {
       } else {
         activeWebWindows.delete(windowKey);
       }
+
+      // Close the session — cleans up this session's short-term dir only
+      closeSession(session.id);
+      io.emit('session_closed', { id: session.id });
     }
 
     // Persist log
@@ -501,11 +542,6 @@ io.on('connection', async (socket) => {
       writeFileSync(join(LOGS_DIR, filename), JSON.stringify(convoLog, null, 2));
       addToLogIndex(filename, convoLog);
     } catch {}
-
-    // Only clean up short-term files when no conversations are in-flight
-    if (activeWebConversations.size === 0 && activeWebWindows.size === 0) {
-      cleanupShortTerm();
-    }
   });
 
   console.log('Dashboard client connected');
@@ -522,6 +558,10 @@ setProcessActivityListener((processKey, type, summary) => {
 // Build log index before starting
 buildLogIndex();
 console.log(`  [Logs] Indexed ${logIndex.length} conversation logs`);
+
+// Clean up orphaned session directories from previous crashes
+cleanupOrphanedSessionDirs();
+console.log('  [Sessions] Cleaned up orphaned session directories');
 assertRuntimeBridgeReady();
 const runtimeHealth = getRuntimeHealthStatus();
 console.log(`  [Runtime] PID ${runtimeHealth.bootFingerprint.pid} started ${runtimeHealth.bootFingerprint.processStartTime}`);

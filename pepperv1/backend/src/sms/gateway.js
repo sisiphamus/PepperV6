@@ -4,6 +4,7 @@ import { parseMessage, resolveSession, createOrUpdateConversation, closeConversa
 import { addToLogIndex, nextLogNumber } from '../index.js';
 import { createRuntimeAwareProgress } from '../runtime-health.js';
 import { extractImages } from '../transport-utils.js';
+import { createSession, closeSession } from '../../../../pepperv4/session/session-manager.js';
 import { writeFileSync, mkdirSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
@@ -228,6 +229,9 @@ async function processIncomingSms(phoneNumber, text) {
   const processKey = parsed.number !== null ? `sms:conv:${parsed.number}` : `sms:chat:${phoneNumber}`;
   const convoLog = { sender: `sms_${phoneNumber}`, prompt: parsed.body, phoneNumber, conversationNumber: parsed.number, resumeSessionId, timestamp: new Date().toISOString(), events: [] };
 
+  // Create isolated session for this execution
+  const session = createSession(processKey, 'sms');
+
   activeCount++;
   try {
     const progressWrapper = createRuntimeAwareProgress((type, data) => {
@@ -241,7 +245,7 @@ async function processIncomingSms(phoneNumber, text) {
     if (progressWrapper.health.stale) {
       emitLog('runtime_stale_code_detected', { phoneNumber, changedFiles: progressWrapper.health.changedFiles });
     }
-    const execResult = await executeClaudePrompt(parsed.body, { onProgress, resumeSessionId, processKey, clarificationKey: processKey });
+    const execResult = await executeClaudePrompt(parsed.body, { onProgress, resumeSessionId, processKey, clarificationKey: processKey, sessionContext: session });
     if (execResult.status === 'needs_user_input') {
       convoLog.clarificationState = { status: 'needs_user_input', questions: execResult.questions };
       const clarificationText = formatQuestionsForSms(execResult.questions);
@@ -283,7 +287,7 @@ async function processIncomingSms(phoneNumber, text) {
         if (progressWrapper.health.stale) {
           emitLog('runtime_stale_code_detected', { phoneNumber, changedFiles: progressWrapper.health.changedFiles });
         }
-        const execResult = await executeClaudePrompt(parsed.body, { onProgress, processKey, clarificationKey: processKey });
+        const execResult = await executeClaudePrompt(parsed.body, { onProgress, processKey, clarificationKey: processKey, sessionContext: session });
         if (execResult.status === 'needs_user_input') {
           convoLog.clarificationState = { status: 'needs_user_input', questions: execResult.questions };
           const clarificationText = formatQuestionsForSms(execResult.questions);
@@ -317,6 +321,8 @@ async function processIncomingSms(phoneNumber, text) {
     }
   } finally {
     activeCount--;
+    // Close the session — cleans up this session's short-term dir
+    closeSession(session.id);
   }
 
   // Persist conversation log

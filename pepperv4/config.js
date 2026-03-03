@@ -1,9 +1,10 @@
 // Config loader — reads from pepperv1/backend/config.json (shared runtime config).
 // Copied from pepperv1/backend/src/config.js so pepperv4 has no source imports from v1.
 
-import { readFileSync, writeFileSync, existsSync } from 'fs';
+import { readFileSync, writeFileSync, renameSync, existsSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
+import { randomBytes } from 'crypto';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const CONFIG_PATH = join(__dirname, '..', 'pepperv1', 'backend', 'config.json');
@@ -13,7 +14,7 @@ const defaults = {
   allowedNumbers: [],
   allowAllNumbers: false,
   claudeCommand: 'claude',
-  claudeArgs: ['--print'],
+  claudeArgs: ['--print', '--max-turns', '25'],
   maxResponseLength: 4000,
   messageTimeout: 900000,
   rateLimitPerMinute: 10,
@@ -48,7 +49,9 @@ function loadConfig() {
 function saveConfig(config) {
   const toSave = { ...config };
   delete toSave.authDir;
-  writeFileSync(CONFIG_PATH, JSON.stringify(toSave, null, 2));
+  const tmpPath = CONFIG_PATH + `.tmp.${randomBytes(4).toString('hex')}`;
+  writeFileSync(tmpPath, JSON.stringify(toSave, null, 2));
+  renameSync(tmpPath, CONFIG_PATH);
 }
 
 const config = loadConfig();

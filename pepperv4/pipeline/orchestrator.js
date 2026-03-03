@@ -10,6 +10,7 @@ import { parseOutputSpec, parseAuditResult, parseTeacherResult, parseLearnerResu
 import { createAggregator } from '../util/progress-aggregator.js';
 import { getFullInventory, getContents, writeMemory, updateMemory, detectSiteContext } from '../memory/memory-manager.js';
 import { config } from '../config.js';
+import { getOutputDir, setClaudeSessionId } from '../session/session-manager.js';
 import { execSync } from 'child_process';
 import { mkdirSync } from 'fs';
 
@@ -43,8 +44,9 @@ function detectFailure(response) {
   return FAILURE_PATTERNS.some(p => p.test(response));
 }
 
-export async function runPipeline(prompt, { onProgress, processKey, timeout, resumeSessionId }) {
-  mkdirSync(config.outputDirectory, { recursive: true });
+export async function runPipeline(prompt, { onProgress, processKey, timeout, resumeSessionId, sessionContext }) {
+  const outputDir = sessionContext ? getOutputDir(sessionContext.id) : config.outputDirectory;
+  mkdirSync(outputDir, { recursive: true });
   const agg = createAggregator(onProgress);
 
   // ── Fast path: resumed session → skip A/B/C, send raw message ──
@@ -62,28 +64,41 @@ export async function runPipeline(prompt, { onProgress, processKey, timeout, res
       onProgress: (type, data) => agg.forward('D', type, data),
       processKey: processKey ? `${processKey}:D` : null,
       timeout,
-      cwd: config.outputDirectory,
+      cwd: outputDir,
       resumeSessionId,
     });
 
-    if (phaseD.questionRequest) {
+    // If the resumed session returned empty (stale/invalid session ID),
+    // fall through to the full pipeline instead of returning nothing.
+    if (!phaseD.response || !phaseD.response.trim()) {
+      agg.phase('D', 'Resumed session returned empty — starting fresh pipeline');
+      resumeSessionId = null;
+      // Fall through to full pipeline below
+    } else {
+      // Track Claude's session ID back to our internal session
+      if (sessionContext && phaseD.sessionId) {
+        setClaudeSessionId(sessionContext.id, phaseD.sessionId);
+      }
+
+      if (phaseD.questionRequest) {
+        return {
+          status: 'needs_user_input',
+          questions: phaseD.questionRequest,
+          sessionId: phaseD.sessionId,
+          fullEvents: phaseD.fullEvents,
+        };
+      }
+
+      // Fire-and-forget learning
+      learnInBackground(prompt, { taskDescription: prompt }, phaseD.response, onProgress, processKey, timeout);
+
       return {
-        status: 'needs_user_input',
-        questions: phaseD.questionRequest,
+        status: 'completed',
+        response: phaseD.response,
         sessionId: phaseD.sessionId,
         fullEvents: phaseD.fullEvents,
       };
     }
-
-    // Fire-and-forget learning
-    learnInBackground(prompt, { taskDescription: prompt }, phaseD.response, onProgress, processKey, timeout);
-
-    return {
-      status: 'completed',
-      response: phaseD.response,
-      sessionId: phaseD.sessionId,
-      fullEvents: phaseD.fullEvents,
-    };
   }
 
   // ── Phase A: Output type classifier (local ML) ──
@@ -172,7 +187,7 @@ export async function runPipeline(prompt, { onProgress, processKey, timeout, res
       const teacherResult = parseTeacherResult(phaseC.response);
       for (const mem of teacherResult.memories) {
         try {
-          writeMemory(mem.name, mem.category, mem.content);
+          await writeMemory(mem.name, mem.category, mem.content);
           newlyCreatedMemories.push(mem); // Keep for immediate use by D
           await tryInstallFromMemory(mem, onProgress);
         } catch (err) {
@@ -202,9 +217,14 @@ export async function runPipeline(prompt, { onProgress, processKey, timeout, res
       onProgress: (type, data) => agg.forward('D', type, data),
       processKey: processKey ? `${processKey}:D` : null,
       timeout,
-      cwd: config.outputDirectory,
+      cwd: outputDir,
       resumeSessionId,
     });
+
+    // Track Claude's session ID back to our internal session
+    if (sessionContext && phaseD.sessionId) {
+      setClaudeSessionId(sessionContext.id, phaseD.sessionId);
+    }
 
     if (phaseD.questionRequest) {
       return {
@@ -267,7 +287,7 @@ export async function runPipeline(prompt, { onProgress, processKey, timeout, res
           onProgress: (type, data) => agg.forward('D', type, data),
           processKey: processKey ? `${processKey}:D2` : null,
           timeout,
-          cwd: config.outputDirectory,
+          cwd: outputDir,
           resumeSessionId,
         });
         if (phaseD2.questionRequest) {
@@ -374,9 +394,9 @@ function learnInBackground(prompt, outputSpec, executionResponse, onProgress, pr
       for (const update of learnerResult.updates) {
         try {
           if (update.path && update.action === 'append') {
-            updateMemory(update.path, 'append', update.content);
+            await updateMemory(update.path, 'append', update.content);
           } else {
-            writeMemory(update.name, update.category, update.content);
+            await writeMemory(update.name, update.category, update.content);
           }
         } catch {}
       }

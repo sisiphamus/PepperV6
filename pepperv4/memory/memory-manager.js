@@ -1,9 +1,11 @@
 // Memory manager — reads/writes all 4 memory categories from pepperv1/backend/bot/memory/.
 // Categories: skills, knowledge, preferences, sites.
 
-import { readdirSync, readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs';
+import { readdirSync, readFileSync, writeFileSync, renameSync, existsSync, mkdirSync } from 'fs';
 import { join, dirname, basename } from 'path';
 import { fileURLToPath } from 'url';
+import { randomBytes } from 'crypto';
+import { enqueueWrite } from './memory-write-queue.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const MEMORY_ROOT = join(__dirname, '..', '..', 'pepperv1', 'backend', 'bot', 'memory');
@@ -103,30 +105,41 @@ export function writeMemory(name, category, content) {
   const subdir = categoryDirs[category];
   if (!subdir) throw new Error(`Unknown memory category: ${category}`);
 
-  let filepath;
-  if (category === 'skill') {
-    const dir = join(MEMORY_ROOT, subdir, name);
-    mkdirSync(dir, { recursive: true });
-    filepath = join(dir, 'SKILL.md');
-  } else {
-    const dir = join(MEMORY_ROOT, subdir);
-    mkdirSync(dir, { recursive: true });
-    filepath = join(dir, `${name}.md`);
-  }
+  return enqueueWrite(() => {
+    let filepath;
+    if (category === 'skill') {
+      const dir = join(MEMORY_ROOT, subdir, name);
+      mkdirSync(dir, { recursive: true });
+      filepath = join(dir, 'SKILL.md');
+    } else {
+      const dir = join(MEMORY_ROOT, subdir);
+      mkdirSync(dir, { recursive: true });
+      filepath = join(dir, `${name}.md`);
+    }
 
-  writeFileSync(filepath, content, 'utf-8');
-  invalidateCache();
-  return filepath;
+    atomicWrite(filepath, content);
+    invalidateCache();
+    return filepath;
+  });
 }
 
 export function updateMemory(path, action, content) {
-  if (action === 'append') {
-    const existing = existsSync(path) ? readFileSync(path, 'utf-8') : '';
-    writeFileSync(path, existing + '\n\n' + content, 'utf-8');
-  } else {
-    writeFileSync(path, content, 'utf-8');
-  }
-  invalidateCache();
+  return enqueueWrite(() => {
+    if (action === 'append') {
+      const existing = existsSync(path) ? readFileSync(path, 'utf-8') : '';
+      atomicWrite(path, existing + '\n\n' + content);
+    } else {
+      atomicWrite(path, content);
+    }
+    invalidateCache();
+  });
+}
+
+/** Write to a temp file then rename — atomic on same filesystem. */
+function atomicWrite(filepath, content) {
+  const tmpPath = filepath + `.tmp.${randomBytes(4).toString('hex')}`;
+  writeFileSync(tmpPath, content, 'utf-8');
+  renameSync(tmpPath, filepath);
 }
 
 export function detectSiteContext(prompt) {
@@ -151,6 +164,21 @@ export function detectSiteContext(prompt) {
       }
     }
   } catch {}
+
+  // Auto-inject browser-preferences when any site context was matched
+  // (if a site is mentioned, browser automation is likely needed)
+  if (matches.length > 0) {
+    const browserPrefs = join(MEMORY_ROOT, 'preferences', 'browser-preferences.md');
+    if (existsSync(browserPrefs)) {
+      try {
+        matches.push({
+          name: 'browser-preferences',
+          category: 'preference',
+          content: readFileSync(browserPrefs, 'utf-8'),
+        });
+      } catch {}
+    }
+  }
 
   return matches;
 }

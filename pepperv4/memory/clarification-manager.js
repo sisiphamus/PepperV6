@@ -1,58 +1,29 @@
 // Clarification manager — handles needs_user_input → user answers → resumed flows.
-// Persists pending clarification state to bot/memory/clarifications.json.
+// Uses in-memory Map (no file persistence) to avoid race conditions between
+// concurrent sessions. Clarifications are ephemeral — if the server restarts,
+// the Claude subprocess that asked the question is also dead, so pending
+// clarifications are correctly discarded.
 
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs';
-import { join, dirname } from 'path';
-import { fileURLToPath } from 'url';
-
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const STORE_PATH = join(__dirname, '..', '..', 'pepperv1', 'backend', 'bot', 'memory', 'clarifications.json');
-
-let store = null;
-
-function load() {
-  if (store) return store;
-  try {
-    if (existsSync(STORE_PATH)) {
-      store = JSON.parse(readFileSync(STORE_PATH, 'utf-8'));
-    } else {
-      store = {};
-    }
-  } catch {
-    store = {};
-  }
-  return store;
-}
-
-function save() {
-  try {
-    mkdirSync(dirname(STORE_PATH), { recursive: true });
-    writeFileSync(STORE_PATH, JSON.stringify(store, null, 2), 'utf-8');
-  } catch {}
-}
+const store = new Map();
 
 export function get(key) {
-  const data = load();
-  return data[key] || null;
+  return store.get(key) || null;
 }
 
 export function setPending(key, { originalPrompt, pendingQuestions, sessionId }) {
-  load();
-  store[key] = {
+  store.set(key, {
     originalPrompt,
     pendingQuestions,
     sessionId,
     answers: [],
     timestamp: Date.now(),
-  };
-  save();
+  });
 }
 
 export function appendAnswer(key, answer) {
-  load();
-  if (!store[key]) return;
-  store[key].answers.push(answer);
-  save();
+  const entry = store.get(key);
+  if (!entry) return;
+  entry.answers.push(answer);
 }
 
 export function buildAugmentedPrompt(entry) {
@@ -72,7 +43,5 @@ export function buildAugmentedPrompt(entry) {
 }
 
 export function clear(key) {
-  load();
-  delete store[key];
-  save();
+  store.delete(key);
 }

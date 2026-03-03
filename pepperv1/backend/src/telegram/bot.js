@@ -4,7 +4,8 @@ import { parseMessage, resolveSession, createOrUpdateConversation, closeConversa
 import { addToLogIndex, nextLogNumber } from '../index.js';
 import { createRuntimeAwareProgress } from '../runtime-health.js';
 import { extractImages } from '../transport-utils.js';
-import { writeFileSync, mkdirSync, readdirSync, unlinkSync, readFileSync, existsSync } from 'fs';
+import { createSession, closeSession } from '../../../../pepperv4/session/session-manager.js';
+import { writeFileSync, mkdirSync, readdirSync, unlinkSync, readFileSync, existsSync, renameSync } from 'fs';
 import { join, dirname, basename } from 'path';
 import { fileURLToPath } from 'url';
 import { randomBytes } from 'crypto';
@@ -41,7 +42,9 @@ function saveChatSessions() {
     for (const [key, value] of chatSessions) {
       obj[key] = value;
     }
-    writeFileSync(CHAT_SESSIONS_PATH, JSON.stringify(obj, null, 2));
+    const tmpPath = CHAT_SESSIONS_PATH + `.tmp.${randomBytes(4).toString('hex')}`;
+    writeFileSync(tmpPath, JSON.stringify(obj, null, 2));
+    renameSync(tmpPath, CHAT_SESSIONS_PATH);
   } catch {}
 }
 
@@ -86,9 +89,10 @@ function getQueueKey(update) {
  * Downloads a photo from a Telegram message and saves to short-term memory.
  * Returns the file path or null.
  */
-async function downloadTelegramPhoto(msg) {
+async function downloadTelegramPhoto(msg, imageDir) {
   if (!msg.photo?.length) return null;
 
+  const dir = imageDir || SHORT_TERM_DIR;
   try {
     // Telegram sends multiple sizes — grab the largest
     const photo = msg.photo[msg.photo.length - 1];
@@ -100,9 +104,9 @@ async function downloadTelegramPhoto(msg) {
     if (!resp.ok) return null;
 
     const buffer = Buffer.from(await resp.arrayBuffer());
-    mkdirSync(SHORT_TERM_DIR, { recursive: true });
+    mkdirSync(dir, { recursive: true });
     const filename = `tg_${randomBytes(4).toString('hex')}.jpg`;
-    const filepath = join(SHORT_TERM_DIR, filename);
+    const filepath = join(dir, filename);
     writeFileSync(filepath, buffer);
     return filepath;
   } catch (err) {
@@ -355,10 +359,15 @@ async function processUpdate(update) {
     }
   }
 
-  // Download image if present
+  const processKey = parsed.number !== null ? `conv:${parsed.number}` : `chat:${chatId}`;
+
+  // Create isolated session for this execution
+  const session = createSession(processKey, 'telegram');
+
+  // Download image if present (session-scoped dir)
   let finalPrompt = parsed.body;
   if (hasPhoto) {
-    const imagePath = await downloadTelegramPhoto(msg);
+    const imagePath = await downloadTelegramPhoto(msg, session.shortTermDir);
     if (imagePath) {
       const caption = finalPrompt || 'What is this image?';
       finalPrompt = `[The user sent an image. Read it with your Read tool at: ${imagePath}]\n\n${caption}`;
@@ -371,8 +380,6 @@ async function processUpdate(update) {
 
   // Collect conversation log for this request
   const convoLog = { sender, prompt: finalPrompt, chatId, conversationNumber: parsed.number, resumeSessionId, timestamp: new Date().toISOString(), events: [] };
-
-  const processKey = parsed.number !== null ? `conv:${parsed.number}` : `chat:${chatId}`;
 
   const isKnownCode = parsed.number !== null && getConversationMode(parsed.number) === 'code';
 
@@ -393,13 +400,13 @@ async function processUpdate(update) {
     let execResult;
     let didDelegate = false;
     if (isKnownCode) {
-      execResult = await executeClaudePrompt(finalPrompt, codeAgentOptions({ onProgress, resumeSessionId, processKey, clarificationKey: processKey }));
+      execResult = await executeClaudePrompt(finalPrompt, codeAgentOptions({ onProgress, resumeSessionId, processKey, clarificationKey: processKey, sessionContext: session }));
     } else {
-      execResult = await executeClaudePrompt(finalPrompt, { onProgress, resumeSessionId, processKey, clarificationKey: processKey, detectDelegation: true });
+      execResult = await executeClaudePrompt(finalPrompt, { onProgress, resumeSessionId, processKey, clarificationKey: processKey, detectDelegation: true, sessionContext: session });
       if (execResult.delegation) {
         didDelegate = true;
         emitLog('delegation', { sender, employee: 'coder', model: execResult.delegation.model });
-        execResult = await executeClaudePrompt(finalPrompt, codeAgentOptions({ onProgress, processKey, clarificationKey: processKey }, execResult.delegation.model));
+        execResult = await executeClaudePrompt(finalPrompt, codeAgentOptions({ onProgress, processKey, clarificationKey: processKey, sessionContext: session }, execResult.delegation.model));
       }
     }
     if (execResult.status === 'needs_user_input') {
@@ -455,13 +462,13 @@ async function processUpdate(update) {
         let execResult;
         let didDelegate = false;
         if (isKnownCode) {
-          execResult = await executeClaudePrompt(finalPrompt, codeAgentOptions({ onProgress, processKey, clarificationKey: processKey }));
+          execResult = await executeClaudePrompt(finalPrompt, codeAgentOptions({ onProgress, processKey, clarificationKey: processKey, sessionContext: session }));
         } else {
-          execResult = await executeClaudePrompt(finalPrompt, { onProgress, processKey, clarificationKey: processKey, detectDelegation: true });
+          execResult = await executeClaudePrompt(finalPrompt, { onProgress, processKey, clarificationKey: processKey, detectDelegation: true, sessionContext: session });
           if (execResult.delegation) {
             didDelegate = true;
             emitLog('delegation', { sender, employee: 'coder', model: execResult.delegation.model });
-            execResult = await executeClaudePrompt(finalPrompt, codeAgentOptions({ onProgress, processKey, clarificationKey: processKey }, execResult.delegation.model));
+            execResult = await executeClaudePrompt(finalPrompt, codeAgentOptions({ onProgress, processKey, clarificationKey: processKey, sessionContext: session }, execResult.delegation.model));
           }
         }
         if (execResult.status === 'needs_user_input') {
@@ -502,6 +509,8 @@ async function processUpdate(update) {
     }
   } finally {
     activeCount--;
+    // Close the session — cleans up this session's short-term dir only
+    closeSession(session.id);
   }
 
   // Persist conversation log to disk
@@ -513,18 +522,6 @@ async function processUpdate(update) {
     io?.emit('conversation_update', { sessionId: convoLog.sessionId, conversationNumber: parsed.number });
   } catch (e) {
     console.log('[telegram:log_write_error]', e.message);
-  }
-
-  // Clean up temp files in memory/short-term/ only when no other conversations are in-flight
-  if (activeCount === 0) {
-    try {
-      const files = readdirSync(SHORT_TERM_DIR);
-      for (const f of files) {
-        unlinkSync(join(SHORT_TERM_DIR, f));
-      }
-    } catch (e) {
-      // Non-critical — don't let cleanup failures break the bot
-    }
   }
 }
 

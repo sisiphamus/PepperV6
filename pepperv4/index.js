@@ -10,6 +10,7 @@ import { runPipeline } from './pipeline/orchestrator.js';
 import * as registry from './util/process-registry.js';
 import * as clarifications from './memory/clarification-manager.js';
 import { detectSiteContext } from './memory/memory-manager.js';
+import { getOutputDir } from './session/session-manager.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const MEMORY_ROOT = join(__dirname, '..', 'pepperv1', 'backend', 'bot', 'memory');
@@ -44,6 +45,7 @@ async function runDirectExecution(prompt, options) {
     processKey,
     resumeSessionId,
     clarificationKey,
+    sessionContext,
     _employee,
   } = options;
 
@@ -65,7 +67,10 @@ async function runDirectExecution(prompt, options) {
     }
   }
 
-  const result = await runModel({
+  // Use session-scoped output dir when available, fall back to options._cwd or global
+  const cwd = sessionContext ? getOutputDir(sessionContext.id) : (options._cwd || config.outputDirectory);
+
+  let result = await runModel({
     userPrompt: prompt,
     systemPrompt: systemPrompt || undefined,
     model: options._modelOverride || null,
@@ -73,9 +78,24 @@ async function runDirectExecution(prompt, options) {
     onProgress,
     processKey,
     timeout: config.messageTimeout,
-    cwd: options._cwd || config.outputDirectory,
+    cwd,
     resumeSessionId,
   });
+
+  // If resumed session returned empty (stale/invalid session), retry without resume
+  if (resumeSessionId && (!result.response || !result.response.trim())) {
+    onProgress?.('warning', { message: 'Resumed session returned empty — retrying without resume' });
+    result = await runModel({
+      userPrompt: prompt,
+      systemPrompt: systemPrompt || undefined,
+      model: options._modelOverride || null,
+      claudeArgs: options._claudeArgs || config.claudeArgs,
+      onProgress,
+      processKey,
+      timeout: config.messageTimeout,
+      cwd,
+    });
+  }
 
   // Check for delegation marker [DELEGATE:employee] or [DELEGATE:employee:model]
   if (options.detectDelegation && result.response) {
@@ -124,7 +144,7 @@ async function runDirectExecution(prompt, options) {
 // ── Main API ──
 
 export async function executeClaudePrompt(prompt, options = {}) {
-  const { processKey, clarificationKey, onProgress } = options;
+  const { processKey, clarificationKey, onProgress, sessionContext } = options;
   const cKey = clarificationKey || processKey;
 
   // Check for pending clarification — if the user is answering a previous question
@@ -153,6 +173,7 @@ export async function executeClaudePrompt(prompt, options = {}) {
     processKey,
     timeout: config.messageTimeout,
     resumeSessionId: options.resumeSessionId,
+    sessionContext,
   });
 
   // Handle clarification from pipeline

@@ -108,4 +108,4 @@ Past conversations are saved in `bot/logs/`. Each file is a JSON with the prompt
 ## Open-Ended Tasks
 
 - **If a task is vague or unbounded** (e.g., "add construction company CEOs on LinkedIn"), ask the user to be specific: how many? which companies? Don't spend 50 turns guessing.
-- **If a website is fighting you** (constant redirects, refs going stale every click, anti-bot behavior), stop after 3 failed attempts. Tell the user the site isn't cooperating and suggest an alternative approach.
+- **If a method fails twice with the same error, switch methods — do NOT retry it.** Move down the priority ladder: MCP → Playwright browser → REST API → escalate with `[NEEDS_MORE_TOOLS]`. Relentless means trying different approaches, not repeating the same broken one.

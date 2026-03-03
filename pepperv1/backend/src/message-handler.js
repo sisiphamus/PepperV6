@@ -7,6 +7,7 @@ import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { randomBytes } from 'crypto';
 import { createRuntimeAwareProgress } from './runtime-health.js';
+import { createSession, closeSession } from '../../../pepperv4/session/session-manager.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const SHORT_TERM_DIR = join(__dirname, '..', 'bot', 'memory', 'short-term');
@@ -59,12 +60,13 @@ function formatQuestionsForText(questionsPayload) {
  * Downloads an image from a WhatsApp message and saves it to short-term memory.
  * Returns the file path or null.
  */
-async function downloadWhatsAppImage(message) {
+async function downloadWhatsAppImage(message, imageDir) {
   const imageMsg = message.message?.imageMessage || message.message?.extendedTextMessage?.contextInfo?.quotedMessage?.imageMessage;
   if (!imageMsg) return null;
 
+  const dir = imageDir || SHORT_TERM_DIR;
   try {
-    mkdirSync(SHORT_TERM_DIR, { recursive: true });
+    mkdirSync(dir, { recursive: true });
     const stream = await downloadContentFromMessage(imageMsg, 'image');
     const chunks = [];
     for await (const chunk of stream) chunks.push(chunk);
@@ -72,7 +74,7 @@ async function downloadWhatsAppImage(message) {
 
     const ext = (imageMsg.mimetype || 'image/jpeg').includes('png') ? 'png' : 'jpg';
     const filename = `wa_${randomBytes(4).toString('hex')}.${ext}`;
-    const filepath = join(SHORT_TERM_DIR, filename);
+    const filepath = join(dir, filename);
     writeFileSync(filepath, buffer);
     return filepath;
   } catch (err) {
@@ -150,17 +152,21 @@ export async function handleMessage(message, emitLog) {
   const resumeSessionId = parsed.number !== null ? resolveSession(parsed.number) : null;
   emitLog?.('processing', { sender, prompt: parsed.body, conversation: parsed.number });
 
-  // Download image if present and prepend path to prompt
+  const processKey = parsed.number !== null ? `wa:conv:${parsed.number}` : `wa:chat:${jid}`;
+
+  // Create isolated session for this execution
+  const session = createSession(processKey, 'whatsapp');
+
+  // Download image if present and prepend path to prompt (session-scoped dir)
   let finalPrompt = parsed.body;
   if (hasImage) {
-    const imagePath = await downloadWhatsAppImage(message);
+    const imagePath = await downloadWhatsAppImage(message, session.shortTermDir);
     if (imagePath) {
       finalPrompt = `[The user sent an image. Read it with your Read tool at: ${imagePath}]\n\n${finalPrompt}`;
       emitLog?.('image', { sender, path: imagePath });
     }
   }
 
-  const processKey = parsed.number !== null ? `wa:conv:${parsed.number}` : `wa:chat:${jid}`;
   const isKnownCode = parsed.number !== null && getConversationMode(parsed.number) === 'code';
   const progressWrapper = createRuntimeAwareProgress((type, data) => emitLog?.(type, { sender, ...data }));
   const onProgress = progressWrapper.onProgress;
@@ -172,13 +178,13 @@ export async function handleMessage(message, emitLog) {
     let execResult;
     let didDelegate = false;
     if (isKnownCode) {
-      execResult = await executeClaudePrompt(finalPrompt, codeAgentOptions({ onProgress, resumeSessionId, processKey, clarificationKey: processKey }));
+      execResult = await executeClaudePrompt(finalPrompt, codeAgentOptions({ onProgress, resumeSessionId, processKey, clarificationKey: processKey, sessionContext: session }));
     } else {
-      execResult = await executeClaudePrompt(finalPrompt, { onProgress, resumeSessionId, processKey, clarificationKey: processKey, detectDelegation: true });
+      execResult = await executeClaudePrompt(finalPrompt, { onProgress, resumeSessionId, processKey, clarificationKey: processKey, detectDelegation: true, sessionContext: session });
       if (execResult.delegation) {
         didDelegate = true;
         emitLog?.('delegation', { sender, employee: 'coder', model: execResult.delegation.model });
-        execResult = await executeClaudePrompt(finalPrompt, codeAgentOptions({ onProgress, processKey, clarificationKey: processKey }, execResult.delegation.model));
+        execResult = await executeClaudePrompt(finalPrompt, codeAgentOptions({ onProgress, processKey, clarificationKey: processKey, sessionContext: session }, execResult.delegation.model));
       }
     }
     if (execResult.status === 'needs_user_input') {
@@ -219,6 +225,9 @@ export async function handleMessage(message, emitLog) {
       runtimeStaleDetected: progressWrapper.health.stale,
       runtimeChangedFiles: progressWrapper.health.changedFiles,
     };
+  } finally {
+    // Clean up this session's short-term files
+    closeSession(session.id);
   }
 }
 
