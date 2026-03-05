@@ -1,6 +1,8 @@
 // Process registry — tracks active pipelines and their subprocesses.
 // Supports kill-by-key (kills all subprocesses matching a pipeline key).
 
+import { spawn } from 'child_process';
+
 const processes = new Map(); // key → { proc, label, startedAt }
 let changeListener = null;
 let activityListener = null;
@@ -20,7 +22,19 @@ export function kill(key) {
   for (const [k, entry] of processes) {
     if (k === key || k.startsWith(key + ':')) {
       entry.proc._stoppedByUser = true;
-      try { entry.proc.kill('SIGTERM'); } catch {}
+      try {
+        if (process.platform === 'win32') {
+          // On Windows, proc.kill() only kills the shell wrapper, not the child tree.
+          // taskkill /T /F kills the entire process tree.
+          spawn('taskkill', ['/T', '/F', '/PID', String(entry.proc.pid)], {
+            shell: true,
+            stdio: 'ignore',
+            detached: true,
+          });
+        } else {
+          process.kill(-entry.proc.pid, 'SIGTERM');
+        }
+      } catch {}
       killed = true;
     }
   }

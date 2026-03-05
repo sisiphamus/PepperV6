@@ -48,12 +48,12 @@ export function parseMessage(text) {
     return { number: parseInt(closeMatch[1], 10), command: 'close', body: '' };
   }
 
-  const numberedStopMatch = text.match(/^(\d+)\s+stop$/i);
+  const numberedStopMatch = text.match(/^(\d+)\s+\/?stop$/i);
   if (numberedStopMatch) {
     return { number: parseInt(numberedStopMatch[1], 10), command: 'stop', body: '' };
   }
 
-  if (/^stop$/i.test(text)) {
+  if (/^\/?stop$/i.test(text)) {
     return { number: null, command: 'stop', body: '' };
   }
 

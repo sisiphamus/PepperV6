@@ -26,6 +26,7 @@ Review the execution and determine:
 2. Did we interact with a website/app in a way worth documenting as site context?
 3. Did we discover user preferences that should be remembered?
 4. Could a new skill be created from this experience?
+5. Review the tool calls and for complex tasks consider how it was eventually solved, for websites update the file with this knowledge
 
 Only create updates if they would genuinely be useful for future tasks. Do NOT create memories for:
 - One-off facts unlikely to recur

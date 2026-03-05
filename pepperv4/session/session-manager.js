@@ -1,14 +1,13 @@
 // Session manager — creates isolated execution contexts for concurrent sessions.
-// Each session gets its own short-term directory (images) and output directory.
+// Each session gets its own short-term directory for temporary files (images, etc.).
 
 import { randomUUID } from 'crypto';
-import { mkdirSync, rmdirSync, readdirSync, unlinkSync, existsSync, rmSync } from 'fs';
+import { mkdirSync, readdirSync, existsSync, rmSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const MEMORY_ROOT = join(__dirname, '..', '..', 'pepperv1', 'backend', 'bot', 'memory');
-const OUTPUT_ROOT = join(__dirname, '..', '..', 'bot', 'outputs');
 const SHORT_TERM_ROOT = join(MEMORY_ROOT, 'short-term');
 
 // Active sessions: Map<sessionId, SessionContext>
@@ -34,7 +33,6 @@ export function createSession(processKey, transport) {
     createdAt: Date.now(),
     lastActivity: Date.now(),
     shortTermDir,
-    outputDir: null, // created on demand
     claudeSessionId: null, // Claude CLI's --resume session ID
     status: 'active',
   };
@@ -66,19 +64,6 @@ export function findSessionByClaudeId(claudeSessionId) {
 export function touchSession(id) {
   const ctx = activeSessions.get(id);
   if (ctx) ctx.lastActivity = Date.now();
-}
-
-/**
- * Get (or create) a session-scoped output directory.
- */
-export function getOutputDir(sessionId) {
-  const ctx = activeSessions.get(sessionId);
-  if (!ctx) return OUTPUT_ROOT; // fallback to global
-  if (!ctx.outputDir) {
-    ctx.outputDir = join(OUTPUT_ROOT, `session-${sessionId.slice(0, 8)}`);
-    mkdirSync(ctx.outputDir, { recursive: true });
-  }
-  return ctx.outputDir;
 }
 
 /**
@@ -146,7 +131,6 @@ export function cleanupStaleSessions() {
  */
 export function cleanupOrphanedSessionDirs() {
   const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
-  const SESSION_DIR_RE = /^session-[0-9a-f]{8}$/;
 
   // Clean orphaned short-term dirs
   try {
@@ -155,21 +139,6 @@ export function cleanupOrphanedSessionDirs() {
         if (entry.isDirectory() && UUID_RE.test(entry.name)) {
           if (!activeSessions.has(entry.name)) {
             cleanupDir(join(SHORT_TERM_ROOT, entry.name));
-          }
-        }
-      }
-    }
-  } catch {}
-
-  // Clean orphaned output dirs
-  try {
-    if (existsSync(OUTPUT_ROOT)) {
-      for (const entry of readdirSync(OUTPUT_ROOT, { withFileTypes: true })) {
-        if (entry.isDirectory() && SESSION_DIR_RE.test(entry.name)) {
-          const prefix = entry.name.replace('session-', '');
-          const hasActive = Array.from(activeSessions.keys()).some(id => id.startsWith(prefix));
-          if (!hasActive) {
-            cleanupDir(join(OUTPUT_ROOT, entry.name));
           }
         }
       }

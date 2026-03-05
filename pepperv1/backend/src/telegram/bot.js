@@ -158,13 +158,20 @@ function emitLog(type, data) {
   if (line !== null) console.log(`[telegram:${type}]`, line);
 }
 
-async function apiCall(method, body = {}) {
-  const res = await fetch(`${TELEGRAM_API}${config.telegramToken}/${method}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
-  return res.json();
+async function apiCall(method, body = {}, retries = 3) {
+  for (let i = 0; i < retries; i++) {
+    try {
+      const res = await fetch(`${TELEGRAM_API}${config.telegramToken}/${method}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      return res.json();
+    } catch (err) {
+      if (i === retries - 1) throw err;
+      await new Promise(r => setTimeout(r, 1000 * (i + 1)));
+    }
+  }
 }
 
 async function sendMessage(chatId, text) {
@@ -344,22 +351,23 @@ async function processUpdate(update) {
     return;
   }
 
+  // Compute processKey early so all log events can include it
+  const processKey = parsed.number !== null ? `conv:${parsed.number}` : `chat:${chatId}`;
+
   // Determine session: numbered conversation takes priority, then implicit timeout-based
   let resumeSessionId = null;
   if (parsed.number !== null) {
     resumeSessionId = resolveSession(parsed.number);
-    emitLog('incoming', { sender, prompt: parsed.body, chatId, conversation: parsed.number, resuming: resumeSessionId });
+    emitLog('incoming', { sender, prompt: parsed.body, chatId, conversation: parsed.number, processKey, resuming: resumeSessionId });
   } else {
     const existing = chatSessions.get(chatId);
     if (existing && (Date.now() - existing.lastActivity) < SESSION_TIMEOUT_MS) {
       resumeSessionId = existing.sessionId;
-      emitLog('incoming', { sender, prompt: parsed.body, chatId, resuming: existing.sessionId });
+      emitLog('incoming', { sender, prompt: parsed.body, chatId, processKey, resuming: existing.sessionId });
     } else {
-      emitLog('incoming', { sender, prompt: parsed.body, chatId });
+      emitLog('incoming', { sender, prompt: parsed.body, chatId, processKey });
     }
   }
-
-  const processKey = parsed.number !== null ? `conv:${parsed.number}` : `chat:${chatId}`;
 
   // Create isolated session for this execution
   const session = createSession(processKey, 'telegram');
@@ -371,12 +379,15 @@ async function processUpdate(update) {
     if (imagePath) {
       const caption = finalPrompt || 'What is this image?';
       finalPrompt = `[The user sent an image. Read it with your Read tool at: ${imagePath}]\n\n${caption}`;
-      emitLog('image', { sender, path: imagePath });
+      emitLog('image', { sender, processKey, path: imagePath });
     }
   }
 
-  // Send "typing" indicator
-  await apiCall('sendChatAction', { chat_id: chatId, action: 'typing' });
+  // Send repeating "typing" indicator (Telegram clears it after ~5s)
+  apiCall('sendChatAction', { chat_id: chatId, action: 'typing' }).catch(() => {});
+  const typingInterval = setInterval(() => {
+    apiCall('sendChatAction', { chat_id: chatId, action: 'typing' }).catch(() => {});
+  }, 4000);
 
   // Collect conversation log for this request
   const convoLog = { sender, prompt: finalPrompt, chatId, conversationNumber: parsed.number, resumeSessionId, timestamp: new Date().toISOString(), events: [] };
@@ -386,7 +397,7 @@ async function processUpdate(update) {
   activeCount++;
   try {
     const progressWrapper = createRuntimeAwareProgress((type, data) => {
-      emitLog(type, { sender, ...data });
+      emitLog(type, { sender, processKey, ...data });
       convoLog.events.push({ type, ...data });
     });
     const onProgress = progressWrapper.onProgress;
@@ -394,7 +405,7 @@ async function processUpdate(update) {
     convoLog.runtimeStaleDetected = progressWrapper.health.stale;
     convoLog.runtimeChangedFiles = progressWrapper.health.changedFiles;
     if (progressWrapper.health.stale) {
-      emitLog('runtime_stale_code_detected', { sender, chatId, changedFiles: progressWrapper.health.changedFiles });
+      emitLog('runtime_stale_code_detected', { sender, chatId, processKey, changedFiles: progressWrapper.health.changedFiles });
     }
 
     let execResult;
@@ -405,7 +416,7 @@ async function processUpdate(update) {
       execResult = await executeClaudePrompt(finalPrompt, { onProgress, resumeSessionId, processKey, clarificationKey: processKey, detectDelegation: true, sessionContext: session });
       if (execResult.delegation) {
         didDelegate = true;
-        emitLog('delegation', { sender, employee: 'coder', model: execResult.delegation.model });
+        emitLog('delegation', { sender, processKey, employee: 'coder', model: execResult.delegation.model });
         execResult = await executeClaudePrompt(finalPrompt, codeAgentOptions({ onProgress, processKey, clarificationKey: processKey, sessionContext: session }, execResult.delegation.model));
       }
     }
@@ -416,7 +427,7 @@ async function processUpdate(update) {
       };
       const message = formatQuestionsMessage(execResult.questions);
       await sendMessage(chatId, message);
-      emitLog('clarification_requested', { sender, chatId, conversation: parsed.number });
+      emitLog('clarification_requested', { sender, chatId, processKey, conversation: parsed.number });
       return;
     }
     const { response, sessionId, fullEvents } = execResult;
@@ -434,21 +445,21 @@ async function processUpdate(update) {
     convoLog.response = response;
     convoLog.sessionId = sessionId;
     convoLog.fullEvents = fullEvents;
-    emitLog('response', { sender, prompt: parsed.body, responseLength: response.length, sessionId, conversation: parsed.number });
+    emitLog('response', { sender, processKey, prompt: parsed.body, responseLength: response.length, sessionId, conversation: parsed.number });
     await sendResponseWithImages(chatId, response);
-    emitLog('sent', { to: sender, responseLength: response.length });
+    emitLog('sent', { to: sender, processKey, responseLength: response.length });
   } catch (err) {
     // If deliberately stopped, don't retry or send error
     if (err.stopped) {
       // Stop handler already sent a message — just let finally clean up
     } else if (resumeSessionId) {
       // If resume failed, try once more without resuming
-      emitLog('resume_failed', { sender, error: err.message, fallback: 'fresh session' });
+      emitLog('resume_failed', { sender, processKey, error: err.message, fallback: 'fresh session' });
       chatSessions.delete(chatId);
       saveChatSessions();
       try {
         const progressWrapper = createRuntimeAwareProgress((type, data) => {
-          emitLog(type, { sender, ...data });
+          emitLog(type, { sender, processKey, ...data });
           convoLog.events.push({ type, ...data });
         });
         const onProgress = progressWrapper.onProgress;
@@ -456,7 +467,7 @@ async function processUpdate(update) {
         convoLog.runtimeStaleDetected = progressWrapper.health.stale;
         convoLog.runtimeChangedFiles = progressWrapper.health.changedFiles;
         if (progressWrapper.health.stale) {
-          emitLog('runtime_stale_code_detected', { sender, chatId, changedFiles: progressWrapper.health.changedFiles });
+          emitLog('runtime_stale_code_detected', { sender, chatId, processKey, changedFiles: progressWrapper.health.changedFiles });
         }
 
         let execResult;
@@ -467,7 +478,7 @@ async function processUpdate(update) {
           execResult = await executeClaudePrompt(finalPrompt, { onProgress, processKey, clarificationKey: processKey, detectDelegation: true, sessionContext: session });
           if (execResult.delegation) {
             didDelegate = true;
-            emitLog('delegation', { sender, employee: 'coder', model: execResult.delegation.model });
+            emitLog('delegation', { sender, processKey, employee: 'coder', model: execResult.delegation.model });
             execResult = await executeClaudePrompt(finalPrompt, codeAgentOptions({ onProgress, processKey, clarificationKey: processKey, sessionContext: session }, execResult.delegation.model));
           }
         }
@@ -478,7 +489,7 @@ async function processUpdate(update) {
           };
           const message = formatQuestionsMessage(execResult.questions);
           await sendMessage(chatId, message);
-          emitLog('clarification_requested', { sender, chatId, conversation: parsed.number });
+          emitLog('clarification_requested', { sender, chatId, processKey, conversation: parsed.number });
           return;
         }
         const { response, sessionId, fullEvents } = execResult;
@@ -494,20 +505,21 @@ async function processUpdate(update) {
         convoLog.response = response;
         convoLog.sessionId = sessionId;
         convoLog.fullEvents = fullEvents;
-        emitLog('response', { sender, prompt: parsed.body, responseLength: response.length, sessionId, conversation: parsed.number });
+        emitLog('response', { sender, processKey, prompt: parsed.body, responseLength: response.length, sessionId, conversation: parsed.number });
         await sendResponseWithImages(chatId, response);
-        emitLog('sent', { to: sender, responseLength: response.length });
+        emitLog('sent', { to: sender, processKey, responseLength: response.length });
       } catch (retryErr) {
         convoLog.error = retryErr.message;
-        emitLog('error', { sender, prompt: parsed.body, error: retryErr.message });
+        emitLog('error', { sender, processKey, prompt: parsed.body, error: retryErr.message });
         await sendMessage(chatId, `Error: ${retryErr.message}`);
       }
     } else {
       convoLog.error = err.message;
-      emitLog('error', { sender, prompt: parsed.body, error: err.message });
+      emitLog('error', { sender, processKey, prompt: parsed.body, error: err.message });
       await sendMessage(chatId, `Error: ${err.message}`);
     }
   } finally {
+    clearInterval(typingInterval);
     activeCount--;
     // Close the session — cleans up this session's short-term dir only
     closeSession(session.id);

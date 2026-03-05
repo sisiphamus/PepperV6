@@ -10,7 +10,7 @@ import { parseOutputSpec, parseAuditResult, parseTeacherResult, parseLearnerResu
 import { createAggregator } from '../util/progress-aggregator.js';
 import { getFullInventory, getContents, writeMemory, updateMemory, detectSiteContext } from '../memory/memory-manager.js';
 import { config } from '../config.js';
-import { getOutputDir, setClaudeSessionId } from '../session/session-manager.js';
+import { setClaudeSessionId } from '../session/session-manager.js';
 import { execSync } from 'child_process';
 import { mkdirSync } from 'fs';
 
@@ -45,7 +45,7 @@ function detectFailure(response) {
 }
 
 export async function runPipeline(prompt, { onProgress, processKey, timeout, resumeSessionId, sessionContext }) {
-  const outputDir = sessionContext ? getOutputDir(sessionContext.id) : config.outputDirectory;
+  const outputDir = config.outputDirectory;
   mkdirSync(outputDir, { recursive: true });
   const agg = createAggregator(onProgress);
 

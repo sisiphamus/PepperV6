@@ -10,7 +10,6 @@ import { runPipeline } from './pipeline/orchestrator.js';
 import * as registry from './util/process-registry.js';
 import * as clarifications from './memory/clarification-manager.js';
 import { detectSiteContext } from './memory/memory-manager.js';
-import { getOutputDir } from './session/session-manager.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const MEMORY_ROOT = join(__dirname, '..', 'pepperv1', 'backend', 'bot', 'memory');
@@ -67,8 +66,7 @@ async function runDirectExecution(prompt, options) {
     }
   }
 
-  // Use session-scoped output dir when available, fall back to options._cwd or global
-  const cwd = sessionContext ? getOutputDir(sessionContext.id) : (options._cwd || config.outputDirectory);
+  const cwd = options._cwd || config.outputDirectory;
 
   let result = await runModel({
     userPrompt: prompt,
