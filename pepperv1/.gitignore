@@ -11,6 +11,7 @@ backend/bot/memory/knowledge/**
 !backend/bot/memory/knowledge/.gitkeep
 backend/bot/memory/preferences/**
 !backend/bot/memory/preferences/.gitkeep
+!backend/bot/memory/preferences/browser-preferences.md
 backend/bot/outputs/**
 !backend/bot/outputs/.gitkeep
 *.log
