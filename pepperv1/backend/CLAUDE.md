@@ -32,29 +32,48 @@ When you receive a task that is primarily coding or software development — bui
 
 ## Browser Automation
 
-- **ALWAYS use Google Chrome.** The Playwright MCP server connects via CDP to the user's running Chrome instance.
+- **NEVER kill Chrome.** Do NOT run `taskkill /im chrome.exe` or any command that terminates Chrome. The AutomationProfile cookies/sessions live in memory — killing Chrome destroys them permanently and forces a manual re-login. If CDP is unreachable, diagnose without killing Chrome.
+- **ALWAYS use Google Chrome.** The chrome-devtools-mcp (`mcp__chrome__*`) connects via autoConnect to the user's already-running Chrome — all sessions, cookies, and logins are preserved. Do NOT use `mcp__playwright__*` tools — they connect via CDP and can create isolation/session issues.
 - **AutomationProfile only has the Rice account (user@example.com) signed in.** Do NOT try to authenticate personal Gmail (`antony.saleh2017@gmail.com`) or personal-account services (personal GitHub, etc.) through the automation browser — it will open the wrong profile.
 - **Git/GitHub credentials**: Use the Windows credential manager or SSH keys — never try to browser-auth a git push. If `gh auth` or git push fails, check `cmdkey /list` and `~/.gitconfig`, not the browser. If you ever fall back to bash-based Playwright or any other browser automation, connect via CDP — never launch a fresh browser. Use Gmail for all email tasks — never use Outlook.
 - **Browser first for authenticated content.** For the user's personal content (Gmail, Todoist, Notion, LinkedIn, etc.), always use the browser — the user is already logged in. Don't try APIs then complain about permissions.
 - **Access app state over DOM.** Modern web apps load all data into JS memory before rendering. Use `browser_evaluate` to access `window.__INITIAL_STATE__`, `window.App?.state`, or `window.store.getState()` — 1 call gets ALL data instead of 10+ calls scraping/scrolling the DOM. If you'll use a site more than once, invest time finding its state access pattern and save it to `bot/memory/sites/`.
 
-### Playwright Tool Names
-Playwright MCP tools are pre-configured and pre-approved. Call them directly — no discovery or ToolSearch needed. **Do NOT call ToolSearch.** It does not exist in this environment.
+### Browser Tool Selection (Read `bot/memory/preferences/browser-preferences.md` first)
+The correct browser MCP tools depend on the user's configured browser. Check `browser-preferences.md` on every session start.
+
+| Preferred Browser | MCP Tools to Use | Notes |
+|-------------------|-----------------|-------|
+| **Google Chrome** | `mcp__chrome__*` (chrome-devtools-mcp, autoConnect) | Connects to already-running Chrome. All sessions/cookies preserved. |
+| **Microsoft Edge / Brave / Other** | `mcp__playwright__*` (Playwright via CDP on port 9222) | Requires browser running with `--remote-debugging-port=9222` |
+
+**Do NOT call ToolSearch.** Both MCP servers are pre-configured and pre-approved — call tools directly.
+
+#### Chrome Tool Names (`mcp__chrome__*`) — use when preferred browser = Chrome
+- `mcp__chrome__navigate_page` — go to a URL
+- `mcp__chrome__take_snapshot` — get accessibility tree (save output, don't inline)
+- `mcp__chrome__click` — click an element
+- `mcp__chrome__type_text` — type into a field
+- `mcp__chrome__fill` — fill a form field
+- `mcp__chrome__press_key` — press keyboard keys
+- `mcp__chrome__list_pages` — list open tabs
+- `mcp__chrome__select_page` — switch tabs
+- `mcp__chrome__evaluate_script` — run JS on the page
+- `mcp__chrome__take_screenshot` — screenshot the page
+
+#### Playwright Tool Names (`mcp__playwright__*`) — use when preferred browser = Edge/Other
 - `mcp__playwright__browser_navigate` — go to a URL
-- `mcp__playwright__browser_snapshot` — get accessibility tree (**ALWAYS use `filename` param** — see Browser Tips)
+- `mcp__playwright__browser_snapshot` — get accessibility tree (**ALWAYS use `filename` param**)
 - `mcp__playwright__browser_click` — click an element by ref
-- `mcp__playwright__browser_type` — type/fill a field by ref (auto-focuses, no click needed)
+- `mcp__playwright__browser_type` — type/fill a field by ref
 - `mcp__playwright__browser_press_key` — press keyboard keys
 - `mcp__playwright__browser_tabs` — switch between tabs
 - `mcp__playwright__browser_evaluate` — run JS on the page
 
 ### Browser Tips
-- **ALWAYS use `filename` param with `browser_snapshot`.** Every page — no exceptions. Save to file, then Grep for the refs you need. If even file-based snapshots are too large, use `browser_evaluate` with `document.querySelectorAll` to extract only what you need. Inline snapshots overflow the context and waste tokens.
-- **SPAs re-render DOM on every click — refs go stale.** Take a fresh snapshot after each action on dynamic sites. Use `browser_evaluate` for atomic multi-step operations (e.g., click dropdown then select item in one JS call). Open a new tab to escape redirect loops.
-- **Always save snapshots to file.** Don't inline them. Even "small" pages can be larger than expected.
-- **If you already have refs from earlier in the session, just use them.** Don't re-snapshot. Compose dialog refs are stable unless you navigated away and back.
-- **`browser_type` with `fill` auto-focuses the element.** Skip the click-then-type pattern.
-- **Reuse known refs.** After a context resume, if the previous context gave you element refs and you haven't navigated away, go straight to typing/clicking.
+- **SPAs re-render DOM on every click — refs go stale.** Take a fresh snapshot after each action on dynamic sites. Use evaluate for atomic multi-step operations (e.g., click dropdown then select item in one JS call). Open a new tab to escape redirect loops.
+- **Access app state over DOM.** Use `evaluate_script`/`browser_evaluate` to access `window.__INITIAL_STATE__`, `window.App?.state`, or `window.store.getState()` — 1 call gets ALL data instead of 10+ calls scraping/scrolling.
+- **If you already have refs from earlier in the session, just use them.** Don't re-snapshot.
 - **Check `bot/memory/sites/` first** if the task involves a site you might have notes on.
 
 ## Memory System
@@ -83,7 +102,7 @@ You have a `bot/memory/` folder with knowledge from past tasks. Check it when th
 - **Batch parallel calls.** If you need to discover tools AND check memory, do both in one turn — don't run them sequentially.
 - **If the task is obvious, skip memory and just act.** "What's on my Todoist?" → navigate to Todoist. Don't check memory first for something that's a single navigation.
 - **Do NOT use TodoWrite, TodoRead, TaskCreate, or any task/todo tools.** They waste turns. Just do the work — don't track it.
-- **Do NOT use ToolSearch.** It does not exist in this environment. Playwright tools are pre-approved — just call them directly.
+- **Do NOT use ToolSearch.** It does not exist in this environment. Browser MCP tools are pre-approved — just call them directly (check browser-preferences.md for which tool set to use).
 
 ## Skills
 
