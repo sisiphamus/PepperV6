@@ -210,13 +210,13 @@ export async function runPipeline(prompt, { onProgress, processKey, timeout, res
     const siteContext = detectSiteContext(prompt);
     const allMemoryContents = [...selectedContents, ...newContents, ...siteContext];
 
-    // If the task involves browser skills, pre-launch Chrome before Phase D runs
-    // so it's ready by the time the first mcp__chrome__* tool call is made.
+    // If the task involves browser skills, launch Chrome and WAIT for it to be ready
+    // before Phase D starts — so mcp__chrome__* tools connect on the first try.
     const needsBrowser = allMemoryContents.some(m =>
       m.category === 'skill' && (m.name === 'browser_use' || m.name === 'chrome_use')
     ) || /\b(browser|navigate|gmail|website|chrome|web|email|linkedin|url|http)\b/i.test(prompt);
     if (needsBrowser) {
-      ensureBrowserReady().catch(() => {});
+      await ensureBrowserReady();
     }
     if (genomeOverride) {
       allMemoryContents.unshift({ name: 'agent-genome', category: 'evolution', content: genomeOverride });
