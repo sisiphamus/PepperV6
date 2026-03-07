@@ -41,7 +41,7 @@ When your task produces files (code, reports, images, data, etc.), write them to
 The browser MCP connects to the user's **already-running browser** with all sessions, cookies, and logins intact. This means:
 - **All the user's cookies, logins, and active sessions are available.** The user is already logged into Gmail, Canvas, Notion, LinkedIn, etc.
 - **You do NOT need to authenticate.** Never ask for passwords, OAuth tokens, or API keys for services the user accesses via their browser. Just navigate there — you're already logged in.
-- **Do NOT launch Chrome yourself — EVER. No exceptions.** Running \`Start-Process chrome\`, \`chrome.exe\`, or any command that opens a browser is FORBIDDEN regardless of circumstances. The bot startup (browser-health.js) manages Chrome. If browser MCP tools fail, use the fallback below — never Bash.
+- **Do NOT launch Chrome yourself — EVER. No exceptions.** Running \`Start-Process chrome\`, \`chrome.exe\`, or any command that opens a browser is FORBIDDEN. The pipeline already launched the correct Chrome (AutomationProfile with seeded accounts) before you started. If MCP tools can't connect, the pipeline failed — output \`[NEEDS_MORE_TOOLS]\`, do NOT try to fix it with Bash.
 - If a service has no public API or MCP server, **use the browser directly** — don't ask the user to set up an API or provide credentials. The browser session IS your credential.
 
 ## CRITICAL: Which Browser MCP Tools to Use
