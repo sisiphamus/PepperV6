@@ -44,7 +44,7 @@ function detectFailure(response) {
   return FAILURE_PATTERNS.some(p => p.test(response));
 }
 
-export async function runPipeline(prompt, { onProgress, processKey, timeout, resumeSessionId, sessionContext }) {
+export async function runPipeline(prompt, { onProgress, processKey, timeout, resumeSessionId, sessionContext, genomeOverride, skipLearning }) {
   const outputDir = config.outputDirectory;
   mkdirSync(outputDir, { recursive: true });
   const agg = createAggregator(onProgress);
@@ -208,6 +208,9 @@ export async function runPipeline(prompt, { onProgress, processKey, timeout, res
     // Add site context detected from the prompt
     const siteContext = detectSiteContext(prompt);
     const allMemoryContents = [...selectedContents, ...newContents, ...siteContext];
+    if (genomeOverride) {
+      allMemoryContents.unshift({ name: 'agent-genome', category: 'evolution', content: genomeOverride });
+    }
 
     const phaseD = await runModel({
       userPrompt: prompt,
@@ -310,7 +313,7 @@ export async function runPipeline(prompt, { onProgress, processKey, timeout, res
   }
 
   // ── Post-task learning (fire-and-forget) ──
-  learnInBackground(prompt, outputSpec, lastDResponse, onProgress, processKey, timeout);
+  if (!skipLearning) learnInBackground(prompt, outputSpec, lastDResponse, onProgress, processKey, timeout);
 
   return {
     status: 'completed',

@@ -36,7 +36,7 @@ When your task produces files (code, reports, images, data, etc.), write them to
 Playwright MCP connects to the user's **already-running Microsoft Edge** via CDP (Chrome DevTools Protocol) on \`localhost:9222\`. This means:
 - **All the user's cookies, logins, and active sessions are available.** The user is already logged into Gmail, Canvas, Notion, LinkedIn, etc.
 - **You do NOT need to authenticate.** Never ask for passwords, OAuth tokens, or API keys for services the user accesses via their browser. Just navigate there — you're already logged in.
-- **Never launch a new browser.** The MCP server reuses the existing Edge instance.
+- **Never launch a browser without the users cookies and loggedin sessions**
 - If a service has no public API or MCP server, **use Playwright directly** — don't ask the user to set up an API or provide credentials. The browser session IS your credential.
 
 ## Service Access — Priority Ladder with Failover

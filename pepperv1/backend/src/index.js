@@ -394,10 +394,11 @@ io.on('connection', async (socket) => {
     // Create an isolated session for this execution
     const session = createSession(processKey, 'web');
     io.emit('session_created', { id: session.id, processKey, transport: 'web' });
+    io.emit('log', { type: 'incoming', data: { sender: 'web', processKey, prompt: finalPrompt, conversation: parsed.number }, timestamp: new Date().toISOString() });
 
     try {
       const progressWrapper = createRuntimeAwareProgress((type, data) => {
-        io.emit('log', { type, data: { sender: 'web', ...data }, timestamp: new Date().toISOString() });
+        io.emit('log', { type, data: { sender: 'web', processKey, ...data }, timestamp: new Date().toISOString() });
         convoLog.events.push({ type, ...data });
         socket.emit('chat_progress', { type, data, sessionId: currentSessionId, messageId });
       });
@@ -406,7 +407,7 @@ io.on('connection', async (socket) => {
       convoLog.runtimeStaleDetected = progressWrapper.health.stale;
       convoLog.runtimeChangedFiles = progressWrapper.health.changedFiles;
       if (progressWrapper.health.stale) {
-        io.emit('log', { type: 'runtime_stale_code_detected', data: { sender: 'web', changedFiles: progressWrapper.health.changedFiles }, timestamp: new Date().toISOString() });
+        io.emit('log', { type: 'runtime_stale_code_detected', data: { sender: 'web', processKey, changedFiles: progressWrapper.health.changedFiles }, timestamp: new Date().toISOString() });
       }
 
       let execResult;
@@ -417,7 +418,7 @@ io.on('connection', async (socket) => {
         execResult = await executeClaudePrompt(finalPrompt, { onProgress, resumeSessionId, processKey, clarificationKey: processKey, detectDelegation: true, sessionContext: session });
         if (execResult.delegation) {
           didDelegate = true;
-          io.emit('log', { type: 'delegation', data: { sender: 'web', employee: 'coder', model: execResult.delegation.model }, timestamp: new Date().toISOString() });
+          io.emit('log', { type: 'delegation', data: { sender: 'web', processKey, employee: 'coder', model: execResult.delegation.model }, timestamp: new Date().toISOString() });
           socket.emit('chat_progress', { type: 'delegation', data: { employee: 'coder', model: execResult.delegation.model }, sessionId: currentSessionId, messageId });
           execResult = await executeClaudePrompt(finalPrompt, codeAgentOptions({ onProgress, processKey, clarificationKey: processKey, sessionContext: session }, execResult.delegation.model));
         }
@@ -433,7 +434,7 @@ io.on('connection', async (socket) => {
           windowId,
           messageId,
         });
-        io.emit('log', { type: 'clarification_requested', data: { sender: 'web', conversation: parsed.number, windowId }, timestamp: new Date().toISOString() });
+        io.emit('log', { type: 'clarification_requested', data: { sender: 'web', processKey, conversation: parsed.number, windowId }, timestamp: new Date().toISOString() });
         return;
       }
       const { response, sessionId, fullEvents } = execResult;
@@ -461,7 +462,7 @@ io.on('connection', async (socket) => {
         currentSessionId = null;
         try {
           const progressWrapper = createRuntimeAwareProgress((type, data) => {
-            io.emit('log', { type, data: { sender: 'web', ...data }, timestamp: new Date().toISOString() });
+            io.emit('log', { type, data: { sender: 'web', processKey, ...data }, timestamp: new Date().toISOString() });
             convoLog.events.push({ type, ...data });
             socket.emit('chat_progress', { type, data, sessionId: currentSessionId, messageId });
           });
@@ -470,7 +471,7 @@ io.on('connection', async (socket) => {
           convoLog.runtimeStaleDetected = progressWrapper.health.stale;
           convoLog.runtimeChangedFiles = progressWrapper.health.changedFiles;
           if (progressWrapper.health.stale) {
-            io.emit('log', { type: 'runtime_stale_code_detected', data: { sender: 'web', changedFiles: progressWrapper.health.changedFiles }, timestamp: new Date().toISOString() });
+            io.emit('log', { type: 'runtime_stale_code_detected', data: { sender: 'web', processKey, changedFiles: progressWrapper.health.changedFiles }, timestamp: new Date().toISOString() });
           }
 
           let execResult;
@@ -496,7 +497,7 @@ io.on('connection', async (socket) => {
               windowId,
               messageId,
             });
-            io.emit('log', { type: 'clarification_requested', data: { sender: 'web', conversation: parsed.number, windowId }, timestamp: new Date().toISOString() });
+            io.emit('log', { type: 'clarification_requested', data: { sender: 'web', processKey, conversation: parsed.number, windowId }, timestamp: new Date().toISOString() });
             return;
           }
           const { response, sessionId, fullEvents } = execResult;
