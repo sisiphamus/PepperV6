@@ -32,7 +32,9 @@ When you receive a task that is primarily coding or software development — bui
 
 ## Browser Automation
 
-- **ALWAYS use Google Chrome.** The Playwright MCP server connects via CDP to the user's running Chrome instance. If you ever fall back to bash-based Playwright or any other browser automation, connect via CDP — never launch a fresh browser. Use Gmail for all email tasks — never use Outlook.
+- **ALWAYS use Google Chrome.** The Playwright MCP server connects via CDP to the user's running Chrome instance.
+- **AutomationProfile only has the Rice account (user@example.com) signed in.** Do NOT try to authenticate personal Gmail (`antony.saleh2017@gmail.com`) or personal-account services (personal GitHub, etc.) through the automation browser — it will open the wrong profile.
+- **Git/GitHub credentials**: Use the Windows credential manager or SSH keys — never try to browser-auth a git push. If `gh auth` or git push fails, check `cmdkey /list` and `~/.gitconfig`, not the browser. If you ever fall back to bash-based Playwright or any other browser automation, connect via CDP — never launch a fresh browser. Use Gmail for all email tasks — never use Outlook.
 - **Browser first for authenticated content.** For the user's personal content (Gmail, Todoist, Notion, LinkedIn, etc.), always use the browser — the user is already logged in. Don't try APIs then complain about permissions.
 - **Access app state over DOM.** Modern web apps load all data into JS memory before rendering. Use `browser_evaluate` to access `window.__INITIAL_STATE__`, `window.App?.state`, or `window.store.getState()` — 1 call gets ALL data instead of 10+ calls scraping/scrolling the DOM. If you'll use a site more than once, invest time finding its state access pattern and save it to `bot/memory/sites/`.
 
