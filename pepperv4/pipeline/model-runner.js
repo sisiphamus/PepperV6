@@ -103,7 +103,19 @@ export function runModel({
     let response_streamed = false; // tracks whether assistant_text was already emitted via streaming
     let killedForQuestion = false; // true when we kill the process to pause for AskUserQuestion
     let killedAfterResult = false; // true after first result — kills process tree to stop background tasks from wasting API calls
-    // No timeout — let models run as long as they need
+
+    // Enforce timeout if specified
+    let timeoutTimer = null;
+    if (timeout && timeout > 0) {
+      timeoutTimer = setTimeout(() => {
+        if (!killedAfterResult && !killedForQuestion) {
+          onProgress?.('warning', { message: `Model timed out after ${timeout}ms` });
+          try { proc.kill(); } catch (e) {
+            process.stderr.write(`[model-runner] Failed to kill timed-out process: ${e.message}\n`);
+          }
+        }
+      }, timeout);
+    }
 
     // Write prompt to stdin and close
     if (stdinPrefix) {
@@ -205,8 +217,10 @@ export function runModel({
             const resultText = event.result ? (typeof event.result === 'string' ? event.result : extractText(event.result)) : null;
             if (resultText && !killedAfterResult) {
               response = resultText;
-              // Always emit the final result as assistant_text (even if streamed earlier, this is the canonical output)
-              onProgress?.('assistant_text', { text: resultText });
+              // Only emit if not already streamed (prevents duplicate assistant_text events)
+              if (!response_streamed) {
+                onProgress?.('assistant_text', { text: resultText });
+              }
             }
             if (!killedAfterResult && event.session_id) sessionId = event.session_id;
             if (event.duration_ms !== undefined || event.total_cost_usd !== undefined) {
@@ -234,7 +248,9 @@ export function runModel({
                   } else {
                     process.kill(-proc.pid, 'SIGTERM');
                   }
-                } catch {}
+                } catch (e) {
+                  // Process may have already exited — non-fatal
+                }
               }, 500);
             }
             break;
@@ -249,6 +265,7 @@ export function runModel({
     });
 
     proc.on('close', (code) => {
+      if (timeoutTimer) clearTimeout(timeoutTimer);
       if (processKey) unregister(processKey);
 
       // Process any remaining buffer

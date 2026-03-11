@@ -153,7 +153,7 @@ function buildLogIndex() {
         };
       } catch { return null; }
     }).filter(Boolean);
-  } catch { logIndex = []; }
+  } catch (e) { console.log('[logs] Failed to build log index:', e.message); logIndex = []; }
 }
 
 export function addToLogIndex(filename, data) {
@@ -251,16 +251,6 @@ app.delete('/api/sessions/:id', (req, res) => {
 // Web chat session tracking
 const SESSION_TIMEOUT_MS = 10 * 60 * 1000;
 let webSession = { sessionId: null, lastActivity: 0 };
-const activeWebConversations = new Set();  // numbered conv numbers currently in-flight
-const activeWebWindows = new Set();         // windowIds currently in-flight (unnumbered)
-
-function cleanupShortTerm() {
-  try {
-    const files = readdirSync(SHORT_TERM_DIR);
-    for (const f of files) unlinkSync(join(SHORT_TERM_DIR, f));
-  } catch {}
-}
-
 function normalizeQuestionsPayload(payload) {
   if (!payload) return { questions: [] };
   if (Array.isArray(payload.questions)) return payload;
@@ -348,13 +338,6 @@ io.on('connection', async (socket) => {
       return;
     }
 
-    // Track active conversations/windows (for cleanup gating, not blocking)
-    if (parsed.number !== null) {
-      activeWebConversations.add(parsed.number);
-    } else {
-      activeWebWindows.add(windowKey);
-    }
-
     // Unique ID for correlating responses when multiple messages are in-flight
     const messageId = randomBytes(4).toString('hex');
 
@@ -369,6 +352,12 @@ io.on('connection', async (socket) => {
     } else if (!windowId && webSession.sessionId && (Date.now() - webSession.lastActivity) < SESSION_TIMEOUT_MS) {
       resumeSessionId = webSession.sessionId;
     }
+
+    const processKey = parsed.number !== null ? `web:conv:${parsed.number}` : `web:win:${windowKey}`;
+
+    // Create session BEFORE image save (image save uses session.shortTermDir)
+    const session = createSession(processKey, 'web');
+    io.emit('session_created', { id: session.id, processKey, transport: 'web' });
 
     // Save image to disk if present (session-scoped directory)
     let finalPrompt = parsed.body;
@@ -387,18 +376,15 @@ io.on('connection', async (socket) => {
       }
     }
 
-    const processKey = parsed.number !== null ? `web:conv:${parsed.number}` : `web:win:${windowKey}`;
     const convoLog = { sender: 'web', prompt: finalPrompt, conversationNumber: parsed.number, resumeSessionId, timestamp: new Date().toISOString(), events: [] };
     const isKnownCode = parsed.number !== null && getConversationMode(parsed.number) === 'code';
     // Track current sessionId for progress events (starts with resume or client-provided)
     let currentSessionId = resumeSessionId || clientSessionId || null;
 
-    // Create an isolated session for this execution
-    const session = createSession(processKey, 'web');
-    io.emit('session_created', { id: session.id, processKey, transport: 'web' });
     io.emit('log', { type: 'incoming', data: { sender: 'web', processKey, prompt: finalPrompt, conversation: parsed.number }, timestamp: new Date().toISOString() });
 
-    try {
+    // Helper: execute prompt with delegation detection (eliminates retry duplication)
+    async function doExec(resumeId) {
       const progressWrapper = createRuntimeAwareProgress((type, data) => {
         io.emit('log', { type, data: { sender: 'web', processKey, ...data }, timestamp: new Date().toISOString() });
         convoLog.events.push({ type, ...data });
@@ -415,9 +401,9 @@ io.on('connection', async (socket) => {
       let execResult;
       let didDelegate = false;
       if (isKnownCode) {
-        execResult = await executeClaudePrompt(finalPrompt, codeAgentOptions({ onProgress, resumeSessionId, processKey, clarificationKey: processKey, sessionContext: session }));
+        execResult = await executeClaudePrompt(finalPrompt, codeAgentOptions({ onProgress, resumeSessionId: resumeId, processKey, clarificationKey: processKey, sessionContext: session }));
       } else {
-        execResult = await executeClaudePrompt(finalPrompt, { onProgress, resumeSessionId, processKey, clarificationKey: processKey, detectDelegation: true, sessionContext: session });
+        execResult = await executeClaudePrompt(finalPrompt, { onProgress, resumeSessionId: resumeId, processKey, clarificationKey: processKey, detectDelegation: true, sessionContext: session });
         if (execResult.delegation) {
           didDelegate = true;
           io.emit('log', { type: 'delegation', data: { sender: 'web', processKey, employee: 'coder', model: execResult.delegation.model }, timestamp: new Date().toISOString() });
@@ -425,23 +411,22 @@ io.on('connection', async (socket) => {
           execResult = await executeClaudePrompt(finalPrompt, codeAgentOptions({ onProgress, processKey, clarificationKey: processKey, sessionContext: session }, execResult.delegation.model));
         }
       }
+      return { execResult, didDelegate };
+    }
+
+    // Helper: process execution result (eliminates retry duplication)
+    function handleResult(execResult, didDelegate) {
       if (execResult.status === 'needs_user_input') {
-        convoLog.clarificationState = {
-          status: 'needs_user_input',
-          questions: execResult.questions,
-        };
+        convoLog.clarificationState = { status: 'needs_user_input', questions: execResult.questions };
         socket.emit('chat_questions', {
           questions: normalizeQuestionsPayload(execResult.questions),
-          sessionId: currentSessionId,
-          windowId,
-          messageId,
+          sessionId: currentSessionId, windowId, messageId,
         });
         io.emit('log', { type: 'clarification_requested', data: { sender: 'web', processKey, conversation: parsed.number, windowId }, timestamp: new Date().toISOString() });
-        return;
+        return 'questions';
       }
       const { response, sessionId, fullEvents } = execResult;
       if (sessionId) currentSessionId = sessionId;
-
       const mode = (isKnownCode || didDelegate) ? 'code' : 'assistant';
       if (sessionId) {
         if (parsed.number !== null) {
@@ -452,71 +437,25 @@ io.on('connection', async (socket) => {
       convoLog.response = response;
       convoLog.sessionId = sessionId;
       convoLog.fullEvents = fullEvents;
-      const { images: responseImages, cleanText: responseCleanText } = extractImages(response);
-      socket.emit('chat_response', { response: responseCleanText, sessionId: currentSessionId, images: responseImages, messageId });
+      const { images, cleanText } = extractImages(response);
+      socket.emit('chat_response', { response: cleanText, sessionId: currentSessionId, images, messageId });
       io.emit('conversation_update', { sessionId, conversationNumber: parsed.number });
+      return 'done';
+    }
+
+    try {
+      const { execResult, didDelegate } = await doExec(resumeSessionId);
+      if (handleResult(execResult, didDelegate) === 'questions') return;
     } catch (err) {
       if (err.stopped) {
-        // Stop handler already sent a response — just let finally clean up
+        // Stop handler already sent a response
       } else if (resumeSessionId) {
         // Retry without session if resume failed
         webSession = { sessionId: null, lastActivity: 0 };
         currentSessionId = null;
         try {
-          const progressWrapper = createRuntimeAwareProgress((type, data) => {
-            io.emit('log', { type, data: { sender: 'web', processKey, ...data }, timestamp: new Date().toISOString() });
-            convoLog.events.push({ type, ...data });
-            socket.emit('chat_progress', { type, data, sessionId: currentSessionId, messageId });
-          });
-          const onProgress = progressWrapper.onProgress;
-          convoLog.runtimeFingerprint = progressWrapper.health.bootFingerprint;
-          convoLog.runtimeStaleDetected = progressWrapper.health.stale;
-          convoLog.runtimeChangedFiles = progressWrapper.health.changedFiles;
-          if (progressWrapper.health.stale) {
-            io.emit('log', { type: 'runtime_stale_code_detected', data: { sender: 'web', processKey, changedFiles: progressWrapper.health.changedFiles }, timestamp: new Date().toISOString() });
-          }
-
-          let execResult;
-          let didDelegate = false;
-          if (isKnownCode) {
-            execResult = await executeClaudePrompt(finalPrompt, codeAgentOptions({ onProgress, processKey, clarificationKey: processKey, sessionContext: session }));
-          } else {
-            execResult = await executeClaudePrompt(finalPrompt, { onProgress, processKey, clarificationKey: processKey, detectDelegation: true, sessionContext: session });
-            if (execResult.delegation) {
-              didDelegate = true;
-              socket.emit('chat_progress', { type: 'delegation', data: { employee: 'coder', model: execResult.delegation.model }, sessionId: currentSessionId, messageId });
-              execResult = await executeClaudePrompt(finalPrompt, codeAgentOptions({ onProgress, processKey, clarificationKey: processKey, sessionContext: session }, execResult.delegation.model));
-            }
-          }
-          if (execResult.status === 'needs_user_input') {
-            convoLog.clarificationState = {
-              status: 'needs_user_input',
-              questions: execResult.questions,
-            };
-            socket.emit('chat_questions', {
-              questions: normalizeQuestionsPayload(execResult.questions),
-              sessionId: currentSessionId,
-              windowId,
-              messageId,
-            });
-            io.emit('log', { type: 'clarification_requested', data: { sender: 'web', processKey, conversation: parsed.number, windowId }, timestamp: new Date().toISOString() });
-            return;
-          }
-          const { response, sessionId, fullEvents } = execResult;
-          if (sessionId) currentSessionId = sessionId;
-
-          const mode = (isKnownCode || didDelegate) ? 'code' : 'assistant';
-          if (sessionId) {
-            if (parsed.number !== null) {
-              createOrUpdateConversation(parsed.number, sessionId, finalPrompt, 'web', mode);
-            }
-            webSession = { sessionId, lastActivity: Date.now() };
-          }
-          convoLog.response = response;
-          convoLog.sessionId = sessionId;
-          convoLog.fullEvents = fullEvents;
-          const { images: retryImages, cleanText: retryCleanText } = extractImages(response);
-          socket.emit('chat_response', { response: retryCleanText, sessionId: currentSessionId, images: retryImages, messageId });
+          const { execResult, didDelegate } = await doExec(null);
+          if (handleResult(execResult, didDelegate) === 'questions') return;
         } catch (retryErr) {
           convoLog.error = retryErr.message;
           socket.emit('chat_error', { error: retryErr.message, messageId });
@@ -526,13 +465,6 @@ io.on('connection', async (socket) => {
         socket.emit('chat_error', { error: err.message, messageId });
       }
     } finally {
-      // Release tracking for this conversation/window
-      if (parsed.number !== null) {
-        activeWebConversations.delete(parsed.number);
-      } else {
-        activeWebWindows.delete(windowKey);
-      }
-
       // Close the session — cleans up this session's short-term dir only
       closeSession(session.id);
       io.emit('session_closed', { id: session.id });
@@ -544,7 +476,7 @@ io.on('connection', async (socket) => {
       const filename = `${nextLogNumber()}_web.json`;
       writeFileSync(join(LOGS_DIR, filename), JSON.stringify(convoLog, null, 2));
       addToLogIndex(filename, convoLog);
-    } catch {}
+    } catch (e) { console.log('[web:log_write_error]', e.message); }
   });
 
   console.log('Dashboard client connected');

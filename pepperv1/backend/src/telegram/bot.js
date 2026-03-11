@@ -9,7 +9,9 @@ import { writeFileSync, mkdirSync, readdirSync, unlinkSync, readFileSync, exists
 import { join, dirname, basename } from 'path';
 import { fileURLToPath } from 'url';
 import { randomBytes } from 'crypto';
-import { execFileSync } from 'child_process';
+import { execFile } from 'child_process';
+import { promisify } from 'util';
+const execFileAsync = promisify(execFile);
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const LOGS_DIR = join(__dirname, '..', '..', 'bot', 'logs');
@@ -34,7 +36,7 @@ function loadChatSessions() {
         chatSessions.set(Number(key), value);
       }
     }
-  } catch {}
+  } catch (e) { console.log('[telegram:load_sessions_error]', e.message); }
 }
 
 function saveChatSessions() {
@@ -46,7 +48,7 @@ function saveChatSessions() {
     const tmpPath = CHAT_SESSIONS_PATH + `.tmp.${randomBytes(4).toString('hex')}`;
     writeFileSync(tmpPath, JSON.stringify(obj, null, 2));
     renameSync(tmpPath, CHAT_SESSIONS_PATH);
-  } catch {}
+  } catch (e) { console.log('[telegram:save_sessions_error]', e.message); }
 }
 
 loadChatSessions();
@@ -151,21 +153,21 @@ async function downloadTelegramVoice(msg, voiceDir) {
  * Transcribes a voice file using OpenAI Whisper CLI.
  * Converts to WAV via ffmpeg first, then runs whisper.
  * Returns the transcribed text or null.
+ * Async to avoid blocking the event loop during transcription.
  */
-function transcribeVoice(voicePath) {
+async function transcribeVoice(voicePath) {
   try {
     const dir = dirname(voicePath);
     const wavName = basename(voicePath).replace(/\.[^.]+$/, '.wav');
     const wavPath = join(dir, wavName);
 
     // Convert OGG/OGA to WAV (16kHz mono, optimal for Whisper)
-    execFileSync('ffmpeg', ['-i', voicePath, '-ar', '16000', '-ac', '1', '-y', wavPath], {
+    await execFileAsync('ffmpeg', ['-i', voicePath, '-ar', '16000', '-ac', '1', '-y', wavPath], {
       timeout: 30000,
-      stdio: 'pipe',
     });
 
     // Run Whisper (base model, English, plain text output)
-    const result = execFileSync('whisper', [
+    const { stdout: whisperOut } = await execFileAsync('whisper', [
       wavPath,
       '--model', 'base',
       '--language', 'en',
@@ -173,7 +175,6 @@ function transcribeVoice(voicePath) {
       '--output_dir', dir,
     ], {
       timeout: 120000,
-      stdio: 'pipe',
       encoding: 'utf-8',
       env: { ...process.env, PYTHONIOENCODING: 'utf-8' },
     });
@@ -189,7 +190,7 @@ function transcribeVoice(voicePath) {
     }
 
     // Fallback: parse stdout
-    const lines = (result || '').split('\n').filter(l => l.trim());
+    const lines = (whisperOut || '').split('\n').filter(l => l.trim());
     return lines.join(' ').trim() || null;
   } catch (err) {
     console.log('[telegram:transcribe_error]', err.message);
@@ -373,6 +374,8 @@ function handleUpdate(update) {
   const prev = chatQueues.get(key) || Promise.resolve();
   const next = prev.then(() => processUpdate(update)).catch(() => {});
   chatQueues.set(key, next);
+  // Clean up queue entry when chain completes (prevents memory leak)
+  next.then(() => { if (chatQueues.get(key) === next) chatQueues.delete(key); });
 }
 
 async function processUpdate(update) {
@@ -472,7 +475,7 @@ async function processUpdate(update) {
     const voicePath = await downloadTelegramVoice(msg, session.shortTermDir);
     if (voicePath) {
       emitLog('voice', { sender, processKey, path: voicePath });
-      const transcript = transcribeVoice(voicePath);
+      const transcript = await transcribeVoice(voicePath);
       if (transcript) {
         const caption = finalPrompt ? `${finalPrompt}\n\n` : '';
         finalPrompt = `${caption}[Voice message transcription]: ${transcript}`;
@@ -500,8 +503,8 @@ async function processUpdate(update) {
 
   const isKnownCode = parsed.number !== null && getConversationMode(parsed.number) === 'code';
 
-  activeCount++;
-  try {
+  // Helper: execute prompt with delegation detection (eliminates retry duplication)
+  async function doExec(resumeId) {
     const progressWrapper = createRuntimeAwareProgress((type, data) => {
       emitLog(type, { sender, processKey, ...data });
       convoLog.events.push({ type, ...data });
@@ -517,28 +520,28 @@ async function processUpdate(update) {
     let execResult;
     let didDelegate = false;
     if (isKnownCode) {
-      execResult = await executeClaudePrompt(finalPrompt, codeAgentOptions({ onProgress, resumeSessionId, processKey, clarificationKey: processKey, sessionContext: session }));
+      execResult = await executeClaudePrompt(finalPrompt, codeAgentOptions({ onProgress, resumeSessionId: resumeId, processKey, clarificationKey: processKey, sessionContext: session }));
     } else {
-      execResult = await executeClaudePrompt(finalPrompt, { onProgress, resumeSessionId, processKey, clarificationKey: processKey, detectDelegation: true, sessionContext: session });
+      execResult = await executeClaudePrompt(finalPrompt, { onProgress, resumeSessionId: resumeId, processKey, clarificationKey: processKey, detectDelegation: true, sessionContext: session });
       if (execResult.delegation) {
         didDelegate = true;
         emitLog('delegation', { sender, processKey, employee: 'coder', model: execResult.delegation.model });
         execResult = await executeClaudePrompt(finalPrompt, codeAgentOptions({ onProgress, processKey, clarificationKey: processKey, sessionContext: session }, execResult.delegation.model));
       }
     }
+    return { execResult, didDelegate };
+  }
+
+  // Helper: process execution result (eliminates retry duplication)
+  async function handleResult(execResult, didDelegate) {
     if (execResult.status === 'needs_user_input') {
-      convoLog.clarificationState = {
-        status: 'needs_user_input',
-        questions: execResult.questions,
-      };
+      convoLog.clarificationState = { status: 'needs_user_input', questions: execResult.questions };
       const message = formatQuestionsMessage(execResult.questions);
       await sendMessage(chatId, message);
       emitLog('clarification_requested', { sender, chatId, processKey, conversation: parsed.number });
-      return;
+      return 'questions';
     }
     const { response, sessionId, fullEvents } = execResult;
-
-    // Store session for future messages
     const mode = (isKnownCode || didDelegate) ? 'code' : 'assistant';
     if (sessionId) {
       if (parsed.number !== null) {
@@ -547,73 +550,29 @@ async function processUpdate(update) {
       chatSessions.set(chatId, { sessionId, lastActivity: Date.now() });
       saveChatSessions();
     }
-
     convoLog.response = response;
     convoLog.sessionId = sessionId;
     convoLog.fullEvents = fullEvents;
     emitLog('response', { sender, processKey, prompt: parsed.body, responseLength: response.length, sessionId, conversation: parsed.number });
     await sendResponseWithImages(chatId, response);
     emitLog('sent', { to: sender, processKey, responseLength: response.length });
+    return 'done';
+  }
+
+  activeCount++;
+  try {
+    const { execResult, didDelegate } = await doExec(resumeSessionId);
+    if (await handleResult(execResult, didDelegate) === 'questions') return;
   } catch (err) {
-    // If deliberately stopped, don't retry or send error
     if (err.stopped) {
-      // Stop handler already sent a message — just let finally clean up
+      // Stop handler already sent a message
     } else if (resumeSessionId) {
-      // If resume failed, try once more without resuming
       emitLog('resume_failed', { sender, processKey, error: err.message, fallback: 'fresh session' });
       chatSessions.delete(chatId);
       saveChatSessions();
       try {
-        const progressWrapper = createRuntimeAwareProgress((type, data) => {
-          emitLog(type, { sender, processKey, ...data });
-          convoLog.events.push({ type, ...data });
-        });
-        const onProgress = progressWrapper.onProgress;
-        convoLog.runtimeFingerprint = progressWrapper.health.bootFingerprint;
-        convoLog.runtimeStaleDetected = progressWrapper.health.stale;
-        convoLog.runtimeChangedFiles = progressWrapper.health.changedFiles;
-        if (progressWrapper.health.stale) {
-          emitLog('runtime_stale_code_detected', { sender, chatId, processKey, changedFiles: progressWrapper.health.changedFiles });
-        }
-
-        let execResult;
-        let didDelegate = false;
-        if (isKnownCode) {
-          execResult = await executeClaudePrompt(finalPrompt, codeAgentOptions({ onProgress, processKey, clarificationKey: processKey, sessionContext: session }));
-        } else {
-          execResult = await executeClaudePrompt(finalPrompt, { onProgress, processKey, clarificationKey: processKey, detectDelegation: true, sessionContext: session });
-          if (execResult.delegation) {
-            didDelegate = true;
-            emitLog('delegation', { sender, processKey, employee: 'coder', model: execResult.delegation.model });
-            execResult = await executeClaudePrompt(finalPrompt, codeAgentOptions({ onProgress, processKey, clarificationKey: processKey, sessionContext: session }, execResult.delegation.model));
-          }
-        }
-        if (execResult.status === 'needs_user_input') {
-          convoLog.clarificationState = {
-            status: 'needs_user_input',
-            questions: execResult.questions,
-          };
-          const message = formatQuestionsMessage(execResult.questions);
-          await sendMessage(chatId, message);
-          emitLog('clarification_requested', { sender, chatId, processKey, conversation: parsed.number });
-          return;
-        }
-        const { response, sessionId, fullEvents } = execResult;
-
-        const mode = (isKnownCode || didDelegate) ? 'code' : 'assistant';
-        if (sessionId) {
-          if (parsed.number !== null) {
-            createOrUpdateConversation(parsed.number, sessionId, finalPrompt, 'telegram', mode);
-          }
-          chatSessions.set(chatId, { sessionId, lastActivity: Date.now() });
-          saveChatSessions();
-        }
-        convoLog.response = response;
-        convoLog.sessionId = sessionId;
-        convoLog.fullEvents = fullEvents;
-        emitLog('response', { sender, processKey, prompt: parsed.body, responseLength: response.length, sessionId, conversation: parsed.number });
-        await sendResponseWithImages(chatId, response);
-        emitLog('sent', { to: sender, processKey, responseLength: response.length });
+        const { execResult, didDelegate } = await doExec(null);
+        if (await handleResult(execResult, didDelegate) === 'questions') return;
       } catch (retryErr) {
         convoLog.error = retryErr.message;
         emitLog('error', { sender, processKey, prompt: parsed.body, error: retryErr.message });

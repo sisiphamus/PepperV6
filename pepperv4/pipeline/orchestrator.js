@@ -366,6 +366,20 @@ function buildToolMemoryRequest(toolsNeeded) {
   };
 }
 
+// Allowlist of safe install command patterns — blocks arbitrary code execution from memory files
+const SAFE_INSTALL_PATTERNS = [
+  /^npm\s+(install|i)\s/,
+  /^npx\s/,
+  /^pip3?\s+install\s/,
+  /^winget\s+install\s/,
+  /^choco\s+install\s/,
+  /^claude\s+mcp\s+add\s/,
+];
+
+function isSafeInstallCommand(cmd) {
+  return SAFE_INSTALL_PATTERNS.some(p => p.test(cmd.trim()));
+}
+
 // If a freshly-created memory describes tool installs, run them immediately so D can use them.
 // Supports any install_command: lines — npm packages, pip packages, winget, etc.
 async function tryInstallFromMemory(mem, onProgress) {
@@ -387,6 +401,10 @@ async function tryInstallFromMemory(mem, onProgress) {
     .filter(cmd => cmd.length > 0);
 
   for (const cmd of installLines) {
+    if (!isSafeInstallCommand(cmd)) {
+      onProgress?.('warning', { message: `Blocked unsafe install command: ${cmd}` });
+      continue;
+    }
     onProgress?.('tool_install', { message: `Installing: ${cmd}` });
     try {
       execSync(cmd, { stdio: 'pipe', timeout: 60000, shell: true });
@@ -444,6 +462,11 @@ function learnInBackground(prompt, outputSpec, executionResponse, fullEvents, on
       for (const update of learnerResult.updates) {
         try {
           if (update.path && update.action === 'append') {
+            // Block path traversal attempts
+            if (update.path.includes('..') || update.path.startsWith('/') || /^[a-zA-Z]:/.test(update.path)) {
+              process.stderr.write(`[learner] Blocked path traversal: ${update.path}\n`);
+              continue;
+            }
             await updateMemory(update.path, 'append', update.content);
             process.stderr.write(`[learner] Appended to ${update.path}\n`);
           } else {

@@ -31,6 +31,6 @@ async function processNext() {
   } catch (err) {
     reject(err);
   }
-  // Process next item regardless of success/failure
-  processNext();
+  // Process next item regardless of success/failure (async to prevent stack buildup)
+  setImmediate(processNext);
 }

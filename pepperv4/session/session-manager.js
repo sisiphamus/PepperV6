@@ -153,5 +153,6 @@ function cleanupDir(dir) {
   } catch {}
 }
 
-// Periodic cleanup every 5 minutes
-setInterval(cleanupStaleSessions, 5 * 60 * 1000);
+// Periodic cleanup every 5 minutes (unref so timer doesn't prevent process shutdown)
+const cleanupTimer = setInterval(cleanupStaleSessions, 5 * 60 * 1000);
+if (cleanupTimer.unref) cleanupTimer.unref();
