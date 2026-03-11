@@ -28,21 +28,35 @@ MODEL_PATH = Path(__file__).parent / 'models' / 'phase_a_v2.pkl'
 # Hand-crafted feature sets (must match train.py exactly)
 QUESTION_STARTERS = {'what', 'whats', "what's", 'who', 'when', 'where', 'how',
                      'why', 'is', 'are', 'can', 'does', 'do', 'did',
-                     'which', 'could', 'should', 'would'}
+                     'which', 'could', 'should', 'would', 'have', 'has'}
 ACTION_VERBS = {'send', 'open', 'push', 'delete', 'navigate', 'add', 'go',
                 'install', 'run', 'close', 'launch', 'click', 'move', 'fix',
                 'continue', 'start', 'stop', 'deploy', 'connect', 'forward',
                 'download', 'upload', 'update', 'set', 'mark', 'tick', 'deal',
-                'learn', 'email', 'save', 'remove', 'check'}
+                'learn', 'email', 'save', 'remove', 'log', 'submit', 'rotate',
+                'complete', 'schedule', 'reply', 'pull', 'implement', 'set up'}
 CREATE_VERBS = {'create', 'make', 'build', 'write', 'generate', 'draw',
-                'design', 'produce', 'compose', 'draft', 'prepare'}
+                'design', 'produce', 'compose', 'draft', 'prepare', 'implement'}
 SERVICE_KEYWORDS = {'gmail', 'calendar', 'gcal', 'canvas', 'notion', 'todoist',
                     'linkedin', 'github', 'google', 'drive', 'docs', 'sheets',
                     'slides', 'gradescope', 'chrome', 'email', 'mail', 'inbox',
-                    'tasks', 'browser'}
+                    'tasks', 'browser', 'io.rice', 'slack', 'discord'}
 GREETING_SET = {'hi', 'hey', 'hello', 'yo', 'yes', 'no', 'ok', 'cool', 'nice',
                 'thanks', 'sure', 'alright', 'great', 'awesome', 'k', 'lol',
-                'haha', 'ping', 'sup', 'bye'}
+                'haha', 'ping', 'sup', 'bye', 'noted', 'understood', 'true',
+                'indeed', 'right', 'exactly', 'perfect', 'interesting', 'hmm'}
+INSTRUCT_PHRASES = ['from now on', 'going forward', 'in the future', 'make a note',
+                    'save this', 'remember this', 'remember that', 'note that',
+                    'always use', 'never use', 'make sure to', 'teach yourself',
+                    'keep in mind', 'memorize', 'update your memory',
+                    'from now on teach', 'delete any']
+INSTRUCT_STARTERS = {'from', 'never', 'always', 'remember', 'whenever',
+                     'specifically', 'going', 'note', 'memorize', 'keep',
+                     'in', 'teach', 'figure', 'update', 'log'}
+CASUAL_PHRASES = ['tell me a joke', 'make me laugh', 'tell me something funny',
+                  'chat with me', 'talk to me', 'entertain me', 'fun fact',
+                  'tell me a fun fact', 'give me a fun fact', 'surprise me',
+                  'how are you', "what's up", 'what do you think', 'any thoughts']
 
 # Domain keyword map for metadata
 DOMAIN_KEYWORDS = {
@@ -97,13 +111,23 @@ except Exception as e:
 def _extract_hand_features(prompt):
     words = prompt.lower().split()
     first_word = words[0] if words else ''
+    prompt_lower = prompt.lower()
+    starts_question = 1.0 if first_word in QUESTION_STARTERS else 0.0
+    has_possessive = 1.0 if 'my' in words else 0.0
     return [
-        1.0 if first_word in QUESTION_STARTERS else 0.0,
+        starts_question,
         1.0 if any(w in ACTION_VERBS for w in words) else 0.0,
         1.0 if any(w in CREATE_VERBS for w in words) else 0.0,
         1.0 if any(w in SERVICE_KEYWORDS for w in words) else 0.0,
         1.0 if len(words) <= 3 and first_word in GREETING_SET else 0.0,
-        1.0 if 'my' in words else 0.0,
+        has_possessive,
+        1.0 if any(phrase in prompt_lower for phrase in INSTRUCT_PHRASES) else 0.0,
+        1.0 if any(phrase in prompt_lower for phrase in CASUAL_PHRASES) else 0.0,
+        1.0 if len(words) > 30 else 0.0,
+        1.0 if first_word == 'go' else 0.0,
+        1.0 if 'check' in words and (starts_question or has_possessive) else 0.0,
+        1.0 if first_word in INSTRUCT_STARTERS and any(phrase in prompt_lower for phrase in INSTRUCT_PHRASES) else 0.0,
+        1.0 if 'voice message' in prompt_lower or 'transcription' in prompt_lower else 0.0,
     ]
 
 

@@ -57,7 +57,7 @@ export async function registerStartup() {
     await ps(`
       $a = New-ScheduledTaskAction -Execute '${nodeBin}' -Argument '"${indexJs}"' -WorkingDirectory '${workDir}'
       $t = New-ScheduledTaskTrigger -AtLogOn
-      $s = New-ScheduledTaskSettingsSet -ExecutionTimeLimit 0 -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1) -StartWhenAvailable $true
+      $s = New-ScheduledTaskSettingsSet -ExecutionTimeLimit 0 -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1) -StartWhenAvailable
       Register-ScheduledTask -TaskName '${TASK_NAME}' -Action $a -Trigger $t -Settings $s -Force
     `);
 

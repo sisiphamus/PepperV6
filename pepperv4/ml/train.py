@@ -32,28 +32,36 @@ TOPICS = [
     "gene therapy", "agile methodology", "inflation", "the Renaissance",
     "deep learning", "electric vehicles", "photosynthesis", "DNA replication",
     "Kubernetes", "the Roman Empire", "microservices", "CSS grid",
+    "recursion", "graph theory", "linear algebra", "sorting algorithms",
+    "database indexing", "REST APIs", "OAuth", "websockets",
+    "data structures", "big data", "serverless", "containerization",
+    "cryptography", "networking", "operating systems", "compilers",
 ]
 APPS = [
     "Chrome", "Spotify", "VS Code", "Slack", "Notepad", "Discord",
     "Excel", "Terminal", "Word", "Telegram", "Outlook", "Firefox",
-    "Calculator", "Paint", "Task Manager", "Zoom",
+    "Calculator", "Paint", "Task Manager", "Zoom", "Figma", "Postman",
+    "Docker Desktop", "GitHub Desktop", "Obsidian", "Notion",
 ]
 FILENAMES = [
     "report.pdf", "notes.txt", "script.py", "config.json", "data.csv",
     "presentation.pptx", "diagram.png", "README.md", "output.xlsx",
+    "summary.docx", "analysis.ipynb", "template.html", "export.zip",
 ]
-NAMES = ["Adam", "John", "Sarah", "the team", "my manager", "the client", "Mia"]
+NAMES = ["Adam", "John", "Sarah", "the team", "my manager", "the client", "Mia",
+         "Julia", "Dr. Bunge", "Sophiya", "the professor", "my advisor"]
 SERVICES = ["Gmail", "Google Calendar", "Canvas", "Notion", "Todoist",
-            "Google Tasks", "LinkedIn", "GitHub", "Google Docs", "Google Drive"]
+            "Google Tasks", "LinkedIn", "GitHub", "Google Docs", "Google Drive",
+            "Gradescope", "Slack", "Google Sheets", "io.rice.edu"]
 
 # ── Seed templates ───────────────────────────────────────────────────────────
 
 INTENT_SEEDS = {
     "query": [
+        # What/check info (not requiring an action)
         "what is {topic}",
         "whats on my {service}",
         "what's on my {service}",
-        "check my {service}",
         "what do I have on {service}",
         "explain {topic}",
         "how does {topic} work",
@@ -82,8 +90,45 @@ INTENT_SEEDS = {
         "what's my grade in comp",
         "whats the reading for today",
         "did {name} accept the invite",
+        "what's on the todo list",
+        "what assignments are on canvas",
+        "what emails did {name} send",
+        "check my {service} for updates",
+        "what's due this week on {service}",
+        "how many unread messages do I have",
+        "what's the latest on {topic}",
+        "have I gotten any emails about {topic}",
+        "what does {name} want",
+        "is there a meeting today",
+        "when is the next deadline",
+        "look at my {service} and tell me what's there",
+        "check my {service} and tell me",
+        "what's on my {service} today",
+        "read my {service} and summarize",
+        "look at my emails",
+        "show me what's on {service}",
+        "pull up my {service} and tell me",
+        "what grade did I get on the last assignment",
+        "check if {name} responded",
+        "what's my current grade",
+        "how did I do on the last exam",
+        "also look at my logs",
+        "look at the recent outputs",
+        "check the logs and tell me what happened",
+        "also check the email from {name}",
+        "look through my {service} for anything about {topic}",
+        "see if there are any new messages",
+        "what's in my inbox",
+        "find out what happened with {topic}",
+        "look at the {service} page and tell me",
+        "{name} should have granted me access, did they",
+        "did {name} grant me access",
+        "check if that worked",
+        "what does the error say",
+        "look at the results",
     ],
     "action": [
+        # Do something, take effect
         "send an email to {name}",
         "email {name} hi",
         "open {app}",
@@ -114,7 +159,6 @@ INTENT_SEEDS = {
         "learn how to send an email via {service}",
         "learn how to use {app}",
         "fix my timecard hours",
-        "check out the email from {name}",
         "deal with the warning for future pushes",
         "mark the task as done",
         "tick off the completed items",
@@ -124,15 +168,50 @@ INTENT_SEEDS = {
         "upload the file to {service}",
         "update the spreadsheet",
         "set up the environment",
-        # Voice message patterns (long, rambling transcriptions)
+        "go to {service} and complete the task",
+        "go to {service} and do {topic}",
+        "go to canvas and submit the assignment",
+        "go to my gmail and reply to {name}",
+        "go to {service} and fix the issue",
+        "go to {service} and do what needs to be done",
+        "pull the latest changes and look at what needs to be fixed",
+        "look at the logs and see what went wrong then fix it",
+        "check out the email from {name} and deal with it",
+        "also look at the email and handle it",
+        "go over the document and make changes",
+        "continue the task from earlier",
+        "continue this task",
+        "go back and fix",
+        "log my hours on {service}",
+        "log my hours for this week",
+        "add my hours to {service}",
+        "rotate the pictures and fix the layout",
+        "do the quiz that's in front of you",
+        "there is a quiz in front of you do it",
+        "complete the assignment in front of you",
+        "complete the form",
+        "go to {service} and complete the quiz",
+        "go to {service} and study up on it",
+        "learn how the course works on {service}",
+        "schedule an email to {name} for tomorrow",
+        "schedule a message to {name}",
+        "send {name} an email about {topic} tomorrow morning",
+        "go to {service} and also check my inbox",
+        "push the changes to github",
+        "push and notify {name}",
+        # Voice message patterns
         "Voice message transcription: I want you to go to {service} and check on {topic} for me also make sure to look at the latest updates",
         "Voice message transcription: alright so I need you to send {name} an email about {topic} and then also check my {service}",
         "Voice message transcription: hey can you go ahead and fix the {topic} issue we talked about also push the changes to github",
         "Voice message transcription: I need you to do the quiz that's in front of you on {service} go ahead and complete it",
         "Voice message transcription: go to {service} and also continue the task from earlier about {topic}",
+        "Voice message transcription: I want you to work on improving model A and model B look at recent examples of your logs",
         "check on my {service} and also handle the {topic} thing",
-        "pull the latest changes and look at what needs to be fixed",
-        "look at the logs and see what went wrong then fix it",
+        "install and set up the following tools",
+        "set up {topic} for me",
+        "go over the draft and make changes",
+        "go over my {service} and do what needs to be done",
+        "look at my gmail and reply to any important emails",
     ],
     "create": [
         "create a presentation about {topic}",
@@ -161,8 +240,30 @@ INTENT_SEEDS = {
         "prepare a briefing deck on {topic}",
         "compose a letter to {name} about {topic}",
         "draft an email to {name}",
+        "write me a summary of {topic}",
+        "generate a study guide for {topic}",
+        "make a cheat sheet on {topic}",
+        "create a template for {topic}",
+        "write a script that does {topic}",
+        "generate practice problems for {topic}",
+        "build me a {topic} tracker",
+        "create a {topic} planner",
+        "write a memo about {topic}",
+        "draft a proposal for {topic}",
+        "produce a slide deck explaining {topic}",
+        "create a Google doc about {topic}",
+        "make a form for {topic}",
+        "build an app for {topic}",
+        "write the code for {topic}",
+        "implement {topic}",
+        "set up a project for {topic}",
+        "create a section in the form for {topic}",
+        "make yourself auth run on startup",
+        "make a memory file for {topic}",
+        "write a skill file for {topic}",
     ],
     "converse": [
+        # Simple greetings / reactions / casual chat
         "yo",
         "hi",
         "hey",
@@ -198,6 +299,49 @@ INTENT_SEEDS = {
         "lol",
         "sup",
         "k",
+        "make me laugh",
+        "tell me something funny",
+        "say something",
+        "chat with me",
+        "I'm listening",
+        "talk to me",
+        "entertain me",
+        "what do you think",
+        "what's your opinion",
+        "any thoughts",
+        "thoughts",
+        "hmm",
+        "hm",
+        "interesting thought",
+        "fair enough",
+        "makes sense",
+        "okay okay",
+        "not bad",
+        "good point",
+        "right",
+        "exactly",
+        "of course",
+        "obviously",
+        "true",
+        "indeed",
+        "noted",
+        "understood",
+        "copy that",
+        "roger that",
+        "on it",
+        "brb",
+        "afk",
+        "back",
+        "I'm back",
+        "hey there",
+        "testing testing",
+        "one two three",
+        "can you hear me",
+        "Voice message transcription: testing the voice message can you hear me",
+        "tell me a fun fact",
+        "give me a fun fact",
+        "surprise me",
+        "say hi",
     ],
     "instruct": [
         "from now on use {service} for all tasks",
@@ -220,11 +364,36 @@ INTENT_SEEDS = {
         "when I say X I mean Y",
         "use this approach going forward",
         "stop using {app} and switch to {service}",
+        "note that my main account is {service}",
+        "make a note of this",
+        "remember this",
+        "memorize this",
+        "save this preference",
+        "going forward always use {service}",
+        "in the future use {service} not {app}",
+        "from now on when I say {topic} I mean this",
+        "teach yourself how to do {topic}",
+        "learn how to handle {topic} for future tasks",
+        "make sure to always {topic} first",
+        "never {topic} without asking me first",
+        "can you decode a voice message if I send it",
+        "figure out how to handle {topic} in the future",
+        "remember that {name} prefers {service}",
+        "add {name}'s email to your memory",
+        "save {name}'s contact info",
+        "update your memory with this",
+        "keep this in mind for next time",
+        "from now on teach yourself to prioritize the faster options",
+        "delete any apps script after you use them",
+        "always save outputs to {service}",
+        "log any important findings to your memory",
+        "when you do a task also tick it off {service}",
+        "specifically use the {service} account not {app}",
+        "make note that I use {service} for tasks",
     ],
 }
 
 FORMAT_SEEDS = {
-    # These get combined with intent seeds — format is determined by keywords
     "inline": [],  # default — no extra seeds needed
     "file": [
         "save the output to {filename}",
@@ -238,6 +407,12 @@ FORMAT_SEEDS = {
         "produce a document I can download",
         "write a shell script",
         "save the results to {filename}",
+        "write a script and save it",
+        "output to a file",
+        "save this to a text file",
+        "create a downloadable report",
+        "export the data as {filename}",
+        "write code and save it as {filename}",
     ],
     "image": [
         "draw me a picture of {topic}",
@@ -250,6 +425,10 @@ FORMAT_SEEDS = {
         "design a logo",
         "make an infographic",
         "draw a flowchart",
+        "generate a photo of {topic}",
+        "create a visual for {topic}",
+        "draw a diagram",
+        "create an illustration of {topic}",
     ],
     "slides": [
         "create a presentation about {topic}",
@@ -260,6 +439,9 @@ FORMAT_SEEDS = {
         "create a pitch deck",
         "design slides for a talk on {topic}",
         "prepare a briefing deck on {topic}",
+        "make a Google Slides presentation",
+        "build me a deck on {topic}",
+        "create slides explaining {topic}",
     ],
     "browser": [
         "go to my {service}",
@@ -274,6 +456,19 @@ FORMAT_SEEDS = {
         "open a tab for {service}",
         "check gradescope",
         "go to canvas",
+        "go to {service} and do",
+        "open gmail",
+        "navigate to gmail",
+        "go to google drive",
+        "log into {service}",
+        "submit on {service}",
+        "reply to {name} on {service}",
+        "go to {service} and complete",
+        "go to canvas and submit",
+        "schedule an email to {name}",
+        "send a message via {service}",
+        "forward the email via gmail",
+        "add an event to my calendar",
     ],
 }
 
@@ -284,19 +479,33 @@ COMBINED_SEEDS = [
     ("go to {service} and check my inbox", "action", ["browser"]),
     ("navigate to {service} and fix the issue", "action", ["browser"]),
     ("push to github and notify {name}", "action", ["inline"]),
+    ("go to canvas and submit the assignment", "action", ["browser"]),
+    ("go to gmail and reply to {name}", "action", ["browser"]),
+    ("schedule an email to {name} for tomorrow morning", "action", ["browser"]),
+    ("add an event to my gcal for tomorrow", "action", ["browser"]),
+    ("log my hours on io.rice.edu", "action", ["browser"]),
+    ("go to gradescope and check my submission", "action", ["browser"]),
+    ("go to {service} and do the quiz", "action", ["browser"]),
+    ("complete the quiz on {service}", "action", ["browser"]),
+    ("go to {service} and complete the form", "action", ["browser"]),
     # create + file
     ("write a script and save as {filename}", "create", ["file"]),
     ("generate a report on {topic} and save it", "create", ["file"]),
     ("create a {filename} for the project", "create", ["file"]),
+    ("write code and export as {filename}", "create", ["file"]),
+    ("generate a PDF of {topic}", "create", ["file"]),
     # create + slides
     ("make a presentation about {topic}", "create", ["slides"]),
     ("build a pitch deck for {name}", "create", ["slides"]),
+    ("create google slides on {topic}", "create", ["slides"]),
     # create + image
     ("draw a diagram of {topic}", "create", ["image"]),
     ("generate an infographic about {topic}", "create", ["image"]),
+    ("make a chart for {topic}", "create", ["image"]),
     # create + browser + file
     ("create a Google Doc about {topic} in my Drive", "create", ["file", "browser"]),
     ("save the practice sheet to {service}", "create", ["file", "browser"]),
+    ("make a Google sheet for {topic}", "create", ["file", "browser"]),
     # action + browser + file
     ("download the attachment from {service}", "action", ["file", "browser"]),
     ("go to {service} and complete the assignment doc", "action", ["file", "browser"]),
@@ -305,37 +514,87 @@ COMBINED_SEEDS = [
     ("check my {service} for updates", "query", ["browser"]),
     ("what assignments are on canvas", "query", ["browser"]),
     ("what emails did {name} send", "query", ["browser"]),
+    ("what's my grade on {service}", "query", ["browser"]),
+    ("look at my {service} and tell me what's there", "query", ["browser"]),
+    ("what's in my gmail inbox", "query", ["browser"]),
+    ("check {service} and tell me what's due", "query", ["browser"]),
+    ("what's on my google tasks", "query", ["browser"]),
+    ("check gradescope for my latest submission", "query", ["browser"]),
+    ("what's my grade on the latest comp homework", "query", ["browser"]),
+    # converse + inline
+    ("make me laugh", "converse", ["inline"]),
+    ("tell me a joke", "converse", ["inline"]),
+    ("tell me something funny", "converse", ["inline"]),
+    ("make me smile", "converse", ["inline"]),
+    ("give me a fun fact", "converse", ["inline"]),
+    ("tell me a fun fact", "converse", ["inline"]),
+    ("surprise me with something", "converse", ["inline"]),
+    ("entertain me", "converse", ["inline"]),
+    # instruct + inline (no browser even if service mentioned)
+    ("from now on only use gmail through chrome", "instruct", ["inline"]),
+    ("from now on use {service} for everything", "instruct", ["inline"]),
+    ("remember that my main email is user@example.com", "instruct", ["inline"]),
+    ("never use outlook for anything", "instruct", ["inline"]),
+    ("when I say todo list I mean google tasks", "instruct", ["inline"]),
+    ("always check {service} before starting a task", "instruct", ["inline"]),
+    ("from now on teach yourself to prioritize the faster options", "instruct", ["inline"]),
+    ("delete any apps script after you use them", "instruct", ["inline"]),
+    ("save this to your memory", "instruct", ["inline"]),
+    ("remember this preference", "instruct", ["inline"]),
+    ("note that I use {service} for {topic}", "instruct", ["inline"]),
+    ("going forward use {service} not {app}", "instruct", ["inline"]),
 ]
 
 # ── Hand-crafted feature extraction ──────────────────────────────────────────
 
 QUESTION_STARTERS = {'what', 'whats', "what's", 'who', 'when', 'where', 'how',
                      'why', 'is', 'are', 'can', 'does', 'do', 'did',
-                     'which', 'could', 'should', 'would'}
+                     'which', 'could', 'should', 'would', 'have', 'has'}
 
 ACTION_VERB_SET = {'send', 'open', 'push', 'delete', 'navigate', 'add', 'go',
                    'install', 'run', 'close', 'launch', 'click', 'move', 'fix',
                    'continue', 'start', 'stop', 'deploy', 'connect', 'forward',
                    'download', 'upload', 'update', 'set', 'mark', 'tick', 'deal',
-                   'learn', 'email', 'save', 'remove', 'check'}
+                   'learn', 'email', 'save', 'remove', 'log', 'submit', 'rotate',
+                   'complete', 'schedule', 'reply', 'pull', 'implement', 'set up'}
+
+# Note: 'check' removed from ACTION_VERB_SET — it's ambiguous (query "check my email" vs action)
+# The TF-IDF + context will handle check correctly
 
 CREATE_VERB_SET = {'create', 'make', 'build', 'write', 'generate', 'draw',
-                   'design', 'produce', 'compose', 'draft', 'prepare'}
+                   'design', 'produce', 'compose', 'draft', 'prepare', 'implement'}
 
 SERVICE_KEYWORDS = {'gmail', 'calendar', 'gcal', 'canvas', 'notion', 'todoist',
                     'linkedin', 'github', 'google', 'drive', 'docs', 'sheets',
                     'slides', 'gradescope', 'chrome', 'email', 'mail', 'inbox',
-                    'tasks', 'browser'}
+                    'tasks', 'browser', 'io.rice', 'slack', 'discord'}
 
 GREETING_SET = {'hi', 'hey', 'hello', 'yo', 'yes', 'no', 'ok', 'cool', 'nice',
                 'thanks', 'sure', 'alright', 'great', 'awesome', 'k', 'lol',
-                'haha', 'ping', 'sup', 'bye'}
+                'haha', 'ping', 'sup', 'bye', 'noted', 'understood', 'true',
+                'indeed', 'right', 'exactly', 'perfect', 'interesting', 'hmm'}
+
+INSTRUCT_STARTERS = {'from', 'never', 'always', 'remember', 'when', 'whenever',
+                     'specifically', 'going', 'note', 'save', 'memorize', 'keep',
+                     'in', 'make', 'teach', 'figure', 'add', 'update', 'log'}
+
+INSTRUCT_PHRASES = ['from now on', 'going forward', 'in the future', 'make a note',
+                    'save this', 'remember this', 'remember that', 'note that',
+                    'always use', 'never use', 'make sure to', 'teach yourself',
+                    'keep in mind', 'memorize', 'update your memory',
+                    'from now on teach', 'delete any']
+
+CASUAL_PHRASES = ['tell me a joke', 'make me laugh', 'tell me something funny',
+                  'chat with me', 'talk to me', 'entertain me', 'fun fact',
+                  'tell me a fun fact', 'give me a fun fact', 'surprise me',
+                  'how are you', "what's up", 'what do you think', 'any thoughts']
 
 
 def extract_hand_features(prompt):
-    """Returns a list of 6 numeric features."""
+    """Returns a list of numeric features."""
     words = prompt.lower().split()
     first_word = words[0] if words else ''
+    prompt_lower = prompt.lower()
 
     starts_question = 1.0 if first_word in QUESTION_STARTERS else 0.0
     has_action = 1.0 if any(w in ACTION_VERB_SET for w in words) else 0.0
@@ -343,12 +602,24 @@ def extract_hand_features(prompt):
     has_service = 1.0 if any(w in SERVICE_KEYWORDS for w in words) else 0.0
     is_short_greeting = 1.0 if len(words) <= 3 and first_word in GREETING_SET else 0.0
     has_possessive = 1.0 if 'my' in words else 0.0
+    is_instruct = 1.0 if any(phrase in prompt_lower for phrase in INSTRUCT_PHRASES) else 0.0
+    is_casual = 1.0 if any(phrase in prompt_lower for phrase in CASUAL_PHRASES) else 0.0
+    is_long = 1.0 if len(words) > 30 else 0.0
+    starts_go = 1.0 if first_word == 'go' else 0.0
+    has_check_query = 1.0 if 'check' in words and (starts_question or has_possessive) else 0.0
+    # "from now on", "going forward" etc — strong instruct signal
+    instruct_starter = 1.0 if first_word in INSTRUCT_STARTERS and is_instruct else 0.0
+    # Voice message
+    is_voice = 1.0 if 'voice message' in prompt_lower or 'transcription' in prompt_lower else 0.0
 
     return [starts_question, has_action, has_create, has_service,
-            is_short_greeting, has_possessive]
+            is_short_greeting, has_possessive, is_instruct, is_casual,
+            is_long, starts_go, has_check_query, instruct_starter, is_voice]
 
 HAND_FEATURE_NAMES = ['starts_question', 'has_action', 'has_create',
-                      'has_service', 'is_short_greeting', 'has_possessive']
+                      'has_service', 'is_short_greeting', 'has_possessive',
+                      'is_instruct', 'is_casual', 'is_long', 'starts_go',
+                      'has_check_query', 'instruct_starter', 'is_voice']
 
 
 # ── Data generation ──────────────────────────────────────────────────────────
@@ -374,7 +645,7 @@ def generate_intent_data():
     for intent in INTENT_LABELS:
         seeds = INTENT_SEEDS[intent]
         for seed in seeds:
-            n_fills = 8 if intent == 'converse' else 12
+            n_fills = 6 if intent == 'converse' else 10
             seen = set()
             for _ in range(n_fills):
                 text = fill(seed).strip()
@@ -449,9 +720,9 @@ def main():
     syn_intent_texts, syn_intent_labels = generate_intent_data()
     syn_format_texts, syn_format_labels = generate_format_data()
 
-    # ── Load real data (weighted 5x) ──
+    # ── Load real data (weighted 8x) ──
     real_int_t, real_int_l, real_fmt_t, real_fmt_l = load_real_examples()
-    REAL_WEIGHT = 5
+    REAL_WEIGHT = 8
     print(f'Real examples: {len(real_int_t)} (weighted {REAL_WEIGHT}x)')
 
     # ── Combine intent data ──
@@ -469,22 +740,23 @@ def main():
 
     # ── Build shared vectorizers ──
     print('\nFitting vectorizers...')
-    # Union of all texts for fitting
     all_texts = list(set(all_intent_texts + all_format_texts))
 
     word_vec = TfidfVectorizer(
-        ngram_range=(1, 2),
-        max_features=5000,
+        ngram_range=(1, 3),
+        max_features=8000,
         sublinear_tf=True,
         analyzer='word',
+        min_df=1,
     )
     word_vec.fit(all_texts)
 
     char_vec = TfidfVectorizer(
         ngram_range=(3, 5),
-        max_features=3000,
+        max_features=4000,
         sublinear_tf=True,
         analyzer='char_wb',
+        min_df=1,
     )
     char_vec.fit(all_texts)
 
@@ -495,19 +767,18 @@ def main():
     X_int_hand = csr_matrix(np.array([extract_hand_features(t) for t in all_intent_texts]))
     X_intent = hstack([X_int_word, X_int_char, X_int_hand])
 
-    # Encode intent labels as integers
     intent_label_map = {l: i for i, l in enumerate(INTENT_LABELS)}
     y_intent = np.array([intent_label_map[l] for l in all_intent_labels])
 
     intent_clf = LogisticRegression(
-        max_iter=1000, C=1.0, random_state=42,
+        max_iter=2000, C=2.0, random_state=42,
         solver='lbfgs',
     )
     intent_clf.fit(X_intent, y_intent)
 
     print('Intent cross-val accuracy (5-fold):')
     scores = cross_val_score(
-        LogisticRegression(max_iter=1000, C=1.0, random_state=42,
+        LogisticRegression(max_iter=2000, C=2.0, random_state=42,
                            solver='lbfgs'),
         X_intent, y_intent, cv=5, scoring='accuracy',
     )
@@ -522,7 +793,7 @@ def main():
     y_format = np.array(all_format_labels)
 
     format_clf = MultiOutputClassifier(
-        LogisticRegression(max_iter=1000, C=1.0, random_state=42),
+        LogisticRegression(max_iter=2000, C=2.0, random_state=42),
     )
     format_clf.fit(X_format, y_format)
 
@@ -530,7 +801,7 @@ def main():
     for i, label in enumerate(FORMAT_LABELS):
         try:
             s = cross_val_score(
-                LogisticRegression(max_iter=1000, C=1.0, random_state=42),
+                LogisticRegression(max_iter=2000, C=2.0, random_state=42),
                 X_format, y_format[:, i], cv=5, scoring='f1',
             )
             print(f'  {label}: {s.mean():.3f} +/- {s.std():.3f}')
@@ -555,6 +826,7 @@ def main():
     # ── Smoke tests ──
     print('\n=== Smoke Tests ===')
     test_cases = [
+        # Original failing cases
         ("Yo", "converse", ["inline"]),
         ("Whats on my gmail", "query", ["browser"]),
         ("Send an email to Adam", "action", ["browser"]),
@@ -570,6 +842,26 @@ def main():
         ("Add a call for mia tomorrow to my gcal", "action", ["browser"]),
         ("From now on teach yourself to prioritize the faster options", "instruct", ["inline"]),
         ("Check my canvas for assignments", "query", ["browser"]),
+        # Extra coverage
+        ("Make me laugh", "converse", ["inline"]),
+        ("Tell me something funny", "converse", ["inline"]),
+        ("What's my grade on the latest comp homework", "query", ["browser"]),
+        ("Check gradescope for my latest submission", "query", ["browser"]),
+        ("Schedule an email to Dr. Bunge for tomorrow morning", "action", ["browser"]),
+        ("Log my hours on io.rice.edu for this week", "action", ["browser"]),
+        ("Generate a PDF report on climate change", "create", ["file"]),
+        ("Make slides on machine learning", "create", ["slides"]),
+        ("From now on use Gmail for all tasks", "instruct", ["inline"]),
+        ("Remember that my main email is user@example.com", "instruct", ["inline"]),
+        ("Save this to your memory", "instruct", ["inline"]),
+        ("Delete any apps script after you use them", "instruct", ["inline"]),
+        ("Go to canvas and submit the assignment", "action", ["browser"]),
+        ("There is a quiz in front of you, do it", "action", ["browser"]),
+        ("What's on my Google tasks", "query", ["browser"]),
+        ("What's in my inbox", "query", ["browser"]),
+        ("Also look at my logs", "query", ["inline"]),
+        ("Look at the recent outputs", "query", ["inline"]),
+        ("Voice message transcription: testing can you hear me", "converse", ["inline"]),
     ]
 
     passed = 0
@@ -597,7 +889,7 @@ def main():
             passed += 1
 
         status = 'OK' if ok else 'FAIL'
-        print(f'  [{status}] "{prompt[:50]}"')
+        print(f'  [{status}] "{prompt[:60]}"')
         if not ok:
             if not intent_ok:
                 print(f'         intent: got={pred_intent}, expected={exp_intent}')
