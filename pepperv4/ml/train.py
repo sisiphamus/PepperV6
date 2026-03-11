@@ -1,30 +1,37 @@
 """
-Phase A multi-label output-type classifier.
-Generates synthetic training data, trains, evaluates, and saves the model.
+Phase A dual-axis classifier.
+Trains two models:
+  1) intent_classifier  — single-label (query, action, create, converse, instruct)
+  2) format_classifier  — multi-label  (inline, file, image, slides, browser)
 
-Labels (independent binary):
-  text, picture, command, presentation, specificFile, other
+Saves both plus vectorizers to models/phase_a_v2.pkl.
 """
 
-import pickle, random, os
+import pickle, random, re, json
 from pathlib import Path
+import numpy as np
+from scipy.sparse import hstack, csr_matrix
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.multioutput import MultiOutputClassifier
 from sklearn.linear_model import LogisticRegression
 from sklearn.model_selection import cross_val_score
-import numpy as np
 
-LABELS = ['text', 'picture', 'command', 'presentation', 'specificFile', 'other']
+INTENT_LABELS = ['query', 'action', 'create', 'converse', 'instruct']
+FORMAT_LABELS = ['inline', 'file', 'image', 'slides', 'browser']
+
+REAL_DATA_PATH = Path(__file__).parent / 'data' / 'real_examples.json'
+MODEL_OUT = Path(__file__).parent / 'models' / 'phase_a_v2.pkl'
+
+# ── Filler pools for synthetic data ──────────────────────────────────────────
 
 TOPICS = [
-    "machine learning", "Python", "climate change", "the Roman Empire",
-    "quantum computing", "the stock market", "photosynthesis", "blockchain",
-    "the French Revolution", "deep learning", "solar energy", "DNA replication",
-    "the Cold War", "React hooks", "electric vehicles", "antibiotics",
-    "supply chain management", "the Renaissance", "neural networks", "Docker",
-    "inflation", "the Amazon rainforest", "TypeScript", "space exploration",
-    "the human brain", "cryptocurrency", "agile methodology", "gene therapy",
-    "the Silk Road", "cloud computing",
+    "machine learning", "Python", "climate change", "the stock market",
+    "quantum computing", "blockchain", "React hooks", "Docker",
+    "neural networks", "supply chain", "cloud computing", "TypeScript",
+    "the Cold War", "antibiotics", "solar energy", "space exploration",
+    "gene therapy", "agile methodology", "inflation", "the Renaissance",
+    "deep learning", "electric vehicles", "photosynthesis", "DNA replication",
+    "Kubernetes", "the Roman Empire", "microservices", "CSS grid",
 ]
 APPS = [
     "Chrome", "Spotify", "VS Code", "Slack", "Notepad", "Discord",
@@ -35,205 +42,316 @@ FILENAMES = [
     "report.pdf", "notes.txt", "script.py", "config.json", "data.csv",
     "presentation.pptx", "diagram.png", "README.md", "output.xlsx",
 ]
-NAMES = ["John", "Sarah", "the team", "my manager", "the client"]
+NAMES = ["Adam", "John", "Sarah", "the team", "my manager", "the client", "Mia"]
+SERVICES = ["Gmail", "Google Calendar", "Canvas", "Notion", "Todoist",
+            "Google Tasks", "LinkedIn", "GitHub", "Google Docs", "Google Drive"]
 
+# ── Seed templates ───────────────────────────────────────────────────────────
 
-# ---------------------------------------------------------------------------
-# Seed templates per label
-# ---------------------------------------------------------------------------
-
-SEEDS = {
-    "text": [
-        "explain {topic}",
+INTENT_SEEDS = {
+    "query": [
         "what is {topic}",
+        "whats on my {service}",
+        "what's on my {service}",
+        "check my {service}",
+        "what do I have on {service}",
+        "explain {topic}",
+        "how does {topic} work",
         "summarize {topic} for me",
-        "give me an overview of {topic}",
-        "describe how {topic} works",
-        "compare {topic} and quantum computing",
-        "tell me about {topic}",
-        "define {topic}",
-        "list the pros and cons of {topic}",
-        "why is {topic} important",
-        "how does {topic} affect the economy",
-        "write a paragraph about {topic}",
-        "can you explain {topic} to a beginner",
         "what are the key concepts in {topic}",
-        "what should I know about {topic}",
-        "give me 5 facts about {topic}",
-        "what are the main arguments for {topic}",
-        "break down {topic} into simple terms",
-        "what's the history of {topic}",
+        "tell me about {topic}",
+        "whats my schedule today",
+        "what's due today",
+        "what tasks do I have",
+        "is there anything on my calendar",
+        "who sent me an email",
+        "what did {name} say",
+        "did I get a response from {name}",
         "how is {topic} different from machine learning",
-        "is {topic} related to React hooks",
-        "help me understand {topic}",
-        "I want to learn about {topic}",
-        "what do experts say about {topic}",
+        "can you check if {name} replied",
+        "what are my unread emails",
+        "what assignments are due this week",
+        "what's the status of my {topic} project",
+        "describe {topic}",
+        "compare {topic} and blockchain",
+        "give me an overview of {topic}",
+        "list the pros and cons of {topic}",
+        "what should I know about {topic}",
+        "break down {topic} into simple terms",
+        "how many tasks do I have left",
+        "what's my grade in comp",
+        "whats the reading for today",
+        "did {name} accept the invite",
     ],
-    "picture": [
+    "action": [
+        "send an email to {name}",
+        "email {name} hi",
+        "open {app}",
+        "launch {app}",
+        "push to github",
+        "push yourself to github",
+        "navigate to {service}",
+        "go to my {service}",
+        "add a meeting with {name} tomorrow",
+        "add a call for {name} at 3pm to my calendar",
+        "delete the file",
+        "close {app}",
+        "send {name} a message saying hi",
+        "forward the email to {name}",
+        "connect my bluetooth speaker",
+        "fix the bug in the code",
+        "run the tests",
+        "deploy the app",
+        "install {app}",
+        "start the server",
+        "click on the submit button",
+        "move the mouse to the top right",
+        "scroll down on the page",
+        "continue your work",
+        "keep going",
+        "do it",
+        "go ahead",
+        "learn how to send an email via {service}",
+        "learn how to use {app}",
+        "fix my timecard hours",
+        "check out the email from {name}",
+        "deal with the warning for future pushes",
+        "mark the task as done",
+        "tick off the completed items",
+        "find {name}'s email address",
+        "look through my {service} for work related to {topic}",
+        "download the attachment from {name}",
+        "upload the file to {service}",
+        "update the spreadsheet",
+        "set up the environment",
+        # Voice message patterns (long, rambling transcriptions)
+        "Voice message transcription: I want you to go to {service} and check on {topic} for me also make sure to look at the latest updates",
+        "Voice message transcription: alright so I need you to send {name} an email about {topic} and then also check my {service}",
+        "Voice message transcription: hey can you go ahead and fix the {topic} issue we talked about also push the changes to github",
+        "Voice message transcription: I need you to do the quiz that's in front of you on {service} go ahead and complete it",
+        "Voice message transcription: go to {service} and also continue the task from earlier about {topic}",
+        "check on my {service} and also handle the {topic} thing",
+        "pull the latest changes and look at what needs to be fixed",
+        "look at the logs and see what went wrong then fix it",
+    ],
+    "create": [
+        "create a presentation about {topic}",
+        "make slides on {topic}",
+        "build a slide deck for {topic}",
+        "write a Python script for {topic}",
+        "generate a PDF report on {topic}",
+        "create a file called {filename}",
+        "write a report on {topic}",
         "draw me a picture of {topic}",
         "generate an image of {topic}",
         "create a diagram of {topic}",
         "make a chart showing {topic}",
-        "visualize {topic} for me",
-        "sketch a concept for {topic}",
-        "illustrate how {topic} works",
-        "produce a photo of {topic}",
-        "show me what {topic} looks like",
+        "build a website for {topic}",
         "design a logo for {topic}",
+        "create a questionnaire for {topic}",
+        "write a blog post about {topic}",
+        "generate me a practice sheet for {topic}",
         "make an infographic about {topic}",
-        "create a visual representation of {topic}",
-        "draw a flowchart for {topic}",
-        "I want a picture of {topic}",
-        "generate artwork depicting {topic}",
-        "make a banner image for {topic}",
-        "create a thumbnail for {topic}",
-        "visualize the process of {topic}",
-        "draw a mind map for {topic}",
-        "generate a graph showing {topic}",
-    ],
-    "command": [
-        "open {app}",
-        "launch {app}",
-        "close {app}",
-        "restart {app}",
-        "install {app}",
-        "run {app}",
-        "start {app}",
-        "connect my Bluetooth speaker",
-        "turn off the Wi-Fi",
-        "click on the submit button",
-        "type my email into the search box",
-        "move the mouse to the top right",
-        "press enter",
-        "execute this shell command",
-        "set up my environment",
-        "start the server",
-        "kill the process",
-        "check the disk usage",
-        "set a system reminder for 3pm",
-        "open a new terminal",
-        "navigate to the downloads folder",
-        "right-click on the desktop",
-        "scroll down on the page",
-        "copy the selected text",
-        "paste into {app}",
-        "switch to the next window",
-        "minimize {app}",
-        "check my CPU usage",
-    ],
-    "presentation": [
-        "create a presentation about {topic}",
-        "make slides on {topic}",
-        "build a slide deck for {topic}",
-        "prepare a PowerPoint about {topic}",
-        "make a slideshow about {topic}",
-        "I need a deck on {topic} for {name}",
-        "create a 10-slide presentation on {topic}",
-        "build me a pitch deck about {topic}",
-        "make presentation slides covering {topic}",
-        "put together a deck on {topic}",
-        "create an executive presentation on {topic}",
-        "make a keynote about {topic}",
-        "design slides for a talk on {topic}",
-        "prepare a briefing deck on {topic}",
-        "I have a meeting about {topic}, make slides",
-        "create a workshop presentation on {topic}",
-    ],
-    "specificFile": [
-        "create a file called {filename}",
-        "write a Python script for {topic}",
-        "save this as {filename}",
-        "generate a PDF report on {topic}",
-        "export this to {filename}",
+        "produce a document about {topic}",
+        "build a tool that does {topic}",
         "create a config file for {topic}",
-        "write a .py script that handles {topic}",
-        "produce a document I can download about {topic}",
-        "make a CSV with data about {topic}",
-        "generate a JSON file for {topic}",
-        "create a markdown file about {topic}",
         "write a shell script to automate {topic}",
-        "save the results to {filename}",
-        "create an Excel spreadsheet for {topic}",
-        "generate a text file with notes on {topic}",
-        "write a README for the {topic} project",
-        "create a requirements.txt for {topic}",
-        "make a backup of {filename}",
-        "output the results as {filename}",
-        "generate a log file for {topic}",
+        "make a spreadsheet for {topic}",
+        "design a form for {topic}",
+        "prepare a briefing deck on {topic}",
+        "compose a letter to {name} about {topic}",
+        "draft an email to {name}",
     ],
-    "other": [
-        "tell me a joke",
-        "what do you think about life",
-        "I'm bored",
-        "let's just chat",
-        "what's your favourite colour",
-        "play a word game with me",
-        "I don't know what I need",
-        "just do something interesting",
-        "surprise me",
-        "what's the meaning of life",
-        "I want to talk to someone",
-        "are you sentient",
-        "what can you do",
-        "how are you feeling today",
-        "let's have a conversation",
-        "say something random",
-        "make me laugh",
-        "I'm feeling lonely",
-        "what's the weather like",
-        "do you dream",
-        "who would win in a fight",
-        "what's your opinion on cats",
-        "recommend me a movie",
-        "what music do you like",
-        "tell me something I don't know",
-        "what would you do if you were human",
-        "just checking in",
-        "are you there",
-        "ping",
-        "nothing just testing",
+    "converse": [
+        "yo",
         "hi",
         "hey",
         "hello",
-        "good morning",
-        "what's up",
-        "how's it going",
-        "thanks",
+        "yes",
+        "no",
         "ok",
         "cool",
         "nice",
-        "interesting thought: {topic}",
+        "thanks",
+        "good morning",
+        "good night",
+        "how are you",
+        "what's up",
+        "just checking in",
+        "ping",
+        "nothing just testing",
+        "tell me a joke",
+        "I'm bored",
+        "interesting",
+        "got it",
+        "sure",
+        "alright",
+        "sounds good",
+        "perfect",
+        "great",
+        "awesome",
+        "I see",
+        "Ive logged in",
+        "just testing",
+        "testing",
+        "haha",
+        "lol",
+        "sup",
+        "k",
+    ],
+    "instruct": [
+        "from now on use {service} for all tasks",
+        "from now on only use {service} through chrome",
+        "remember that my main email is user@example.com",
+        "never use outlook for anything",
+        "always prioritize the faster options",
+        "teach yourself to use {app}",
+        "when I say todo list I mean {service}",
+        "from now on {topic} should be handled differently",
+        "make sure to use {name}'s account",
+        "specifically use the {name} account",
+        "whenever you perform a task tick it off of {service}",
+        "remember this format for future use",
+        "save this to your memory",
+        "don't ever do that again",
+        "always check {service} before starting",
+        "from now on prioritize {service} over {app}",
+        "remember that {name}'s email is test@example.com",
+        "when I say X I mean Y",
+        "use this approach going forward",
+        "stop using {app} and switch to {service}",
     ],
 }
 
-# Multi-label examples: (text, label_dict)
-MULTI_LABEL_SEEDS = [
-    # command + specificFile
-    ("run a Python script that saves the output to {filename}", {"command": 1, "specificFile": 1}),
-    ("execute the script and write results to {filename}", {"command": 1, "specificFile": 1}),
-    ("install the package and create a config file {filename}", {"command": 1, "specificFile": 1}),
-    # command + picture
-    ("open Paint and draw {topic}", {"command": 1, "picture": 1}),
-    ("take a screenshot of {app}", {"command": 1, "picture": 1}),
-    ("run the script and generate a graph of {topic}", {"command": 1, "picture": 1}),
-    # text + specificFile
-    ("write a report on {topic} and save it as {filename}", {"text": 1, "specificFile": 1}),
-    ("summarize {topic} and export as {filename}", {"text": 1, "specificFile": 1}),
-    ("research {topic} and save notes to {filename}", {"text": 1, "specificFile": 1}),
-    # picture + specificFile
-    ("generate an image of {topic} and save it as {filename}", {"picture": 1, "specificFile": 1}),
-    ("create a diagram and export as {filename}", {"picture": 1, "specificFile": 1}),
-    # presentation + specificFile
-    ("build a presentation on {topic} and save as {filename}", {"presentation": 1, "specificFile": 1}),
-    ("make slides about {topic} and export them", {"presentation": 1, "specificFile": 1}),
-    # text + picture
-    ("explain {topic} with a diagram", {"text": 1, "picture": 1}),
-    ("describe {topic} and include a chart", {"text": 1, "picture": 1}),
-    # command + text
-    ("check the logs and summarize what happened with {topic}", {"command": 1, "text": 1}),
-    ("run a health check and give me a status report", {"command": 1, "text": 1}),
+FORMAT_SEEDS = {
+    # These get combined with intent seeds — format is determined by keywords
+    "inline": [],  # default — no extra seeds needed
+    "file": [
+        "save the output to {filename}",
+        "create a file called {filename}",
+        "write a Python script",
+        "export as {filename}",
+        "generate a PDF",
+        "write a .py script",
+        "save it as {filename}",
+        "create a markdown file",
+        "produce a document I can download",
+        "write a shell script",
+        "save the results to {filename}",
+    ],
+    "image": [
+        "draw me a picture of {topic}",
+        "generate an image of {topic}",
+        "create a diagram of {topic}",
+        "make a chart showing {topic}",
+        "take a screenshot",
+        "visualize {topic}",
+        "sketch a concept for {topic}",
+        "design a logo",
+        "make an infographic",
+        "draw a flowchart",
+    ],
+    "slides": [
+        "create a presentation about {topic}",
+        "make slides on {topic}",
+        "build a slide deck",
+        "prepare a PowerPoint about {topic}",
+        "make a slideshow",
+        "create a pitch deck",
+        "design slides for a talk on {topic}",
+        "prepare a briefing deck on {topic}",
+    ],
+    "browser": [
+        "go to my {service}",
+        "navigate to {service}",
+        "check my {service}",
+        "open {service} in chrome",
+        "whats on my {service}",
+        "send an email to {name}",
+        "email {name}",
+        "look at my {service}",
+        "add to my google calendar",
+        "open a tab for {service}",
+        "check gradescope",
+        "go to canvas",
+    ],
+}
+
+# Combined intent+format seeds for multi-label training
+COMBINED_SEEDS = [
+    # action + browser
+    ("send an email to {name} via {service}", "action", ["browser"]),
+    ("go to {service} and check my inbox", "action", ["browser"]),
+    ("navigate to {service} and fix the issue", "action", ["browser"]),
+    ("push to github and notify {name}", "action", ["inline"]),
+    # create + file
+    ("write a script and save as {filename}", "create", ["file"]),
+    ("generate a report on {topic} and save it", "create", ["file"]),
+    ("create a {filename} for the project", "create", ["file"]),
+    # create + slides
+    ("make a presentation about {topic}", "create", ["slides"]),
+    ("build a pitch deck for {name}", "create", ["slides"]),
+    # create + image
+    ("draw a diagram of {topic}", "create", ["image"]),
+    ("generate an infographic about {topic}", "create", ["image"]),
+    # create + browser + file
+    ("create a Google Doc about {topic} in my Drive", "create", ["file", "browser"]),
+    ("save the practice sheet to {service}", "create", ["file", "browser"]),
+    # action + browser + file
+    ("download the attachment from {service}", "action", ["file", "browser"]),
+    ("go to {service} and complete the assignment doc", "action", ["file", "browser"]),
+    # query + browser
+    ("whats on my {service}", "query", ["browser"]),
+    ("check my {service} for updates", "query", ["browser"]),
+    ("what assignments are on canvas", "query", ["browser"]),
+    ("what emails did {name} send", "query", ["browser"]),
 ]
 
+# ── Hand-crafted feature extraction ──────────────────────────────────────────
+
+QUESTION_STARTERS = {'what', 'whats', "what's", 'who', 'when', 'where', 'how',
+                     'why', 'is', 'are', 'can', 'does', 'do', 'did',
+                     'which', 'could', 'should', 'would'}
+
+ACTION_VERB_SET = {'send', 'open', 'push', 'delete', 'navigate', 'add', 'go',
+                   'install', 'run', 'close', 'launch', 'click', 'move', 'fix',
+                   'continue', 'start', 'stop', 'deploy', 'connect', 'forward',
+                   'download', 'upload', 'update', 'set', 'mark', 'tick', 'deal',
+                   'learn', 'email', 'save', 'remove', 'check'}
+
+CREATE_VERB_SET = {'create', 'make', 'build', 'write', 'generate', 'draw',
+                   'design', 'produce', 'compose', 'draft', 'prepare'}
+
+SERVICE_KEYWORDS = {'gmail', 'calendar', 'gcal', 'canvas', 'notion', 'todoist',
+                    'linkedin', 'github', 'google', 'drive', 'docs', 'sheets',
+                    'slides', 'gradescope', 'chrome', 'email', 'mail', 'inbox',
+                    'tasks', 'browser'}
+
+GREETING_SET = {'hi', 'hey', 'hello', 'yo', 'yes', 'no', 'ok', 'cool', 'nice',
+                'thanks', 'sure', 'alright', 'great', 'awesome', 'k', 'lol',
+                'haha', 'ping', 'sup', 'bye'}
+
+
+def extract_hand_features(prompt):
+    """Returns a list of 6 numeric features."""
+    words = prompt.lower().split()
+    first_word = words[0] if words else ''
+
+    starts_question = 1.0 if first_word in QUESTION_STARTERS else 0.0
+    has_action = 1.0 if any(w in ACTION_VERB_SET for w in words) else 0.0
+    has_create = 1.0 if any(w in CREATE_VERB_SET for w in words) else 0.0
+    has_service = 1.0 if any(w in SERVICE_KEYWORDS for w in words) else 0.0
+    is_short_greeting = 1.0 if len(words) <= 3 and first_word in GREETING_SET else 0.0
+    has_possessive = 1.0 if 'my' in words else 0.0
+
+    return [starts_question, has_action, has_create, has_service,
+            is_short_greeting, has_possessive]
+
+HAND_FEATURE_NAMES = ['starts_question', 'has_action', 'has_create',
+                      'has_service', 'is_short_greeting', 'has_possessive']
+
+
+# ── Data generation ──────────────────────────────────────────────────────────
 
 def fill(template):
     t = template
@@ -245,89 +363,248 @@ def fill(template):
         t = t.replace('{filename}', random.choice(FILENAMES))
     if '{name}' in t:
         t = t.replace('{name}', random.choice(NAMES))
+    if '{service}' in t:
+        t = t.replace('{service}', random.choice(SERVICES))
     return t
 
 
-def generate_examples():
-    texts = []
-    y = []
-
-    # Single-label examples
-    for label_idx, label in enumerate(LABELS):
-        seeds = SEEDS[label]
-        label_vec = [0] * len(LABELS)
-        label_vec[label_idx] = 1
-
-        generated = set()
+def generate_intent_data():
+    """Generate synthetic intent-labeled data."""
+    texts, labels = [], []
+    for intent in INTENT_LABELS:
+        seeds = INTENT_SEEDS[intent]
         for seed in seeds:
-            # Each seed gets ~15 fillers
-            for _ in range(15):
+            n_fills = 8 if intent == 'converse' else 12
+            seen = set()
+            for _ in range(n_fills):
                 text = fill(seed).strip()
-                if text not in generated:
-                    generated.add(text)
+                if text not in seen:
+                    seen.add(text)
                     texts.append(text)
-                    y.append(list(label_vec))
+                    labels.append(intent)
+    return texts, labels
 
-    # Multi-label examples
-    for template, label_dict in MULTI_LABEL_SEEDS:
-        label_vec = [label_dict.get(l, 0) for l in LABELS]
-        for _ in range(12):
+
+def generate_format_data():
+    """Generate synthetic format-labeled data (multi-label)."""
+    texts, labels = [], []
+
+    # Pure format seeds (each maps to one format)
+    for fmt in FORMAT_LABELS:
+        seeds = FORMAT_SEEDS.get(fmt, [])
+        fmt_vec = [1 if f == fmt else 0 for f in FORMAT_LABELS]
+        for seed in seeds:
+            for _ in range(10):
+                text = fill(seed).strip()
+                texts.append(text)
+                labels.append(list(fmt_vec))
+
+    # Combined intent+format seeds
+    for template, _, fmts in COMBINED_SEEDS:
+        fmt_vec = [1 if f in fmts else 0 for f in FORMAT_LABELS]
+        for _ in range(10):
             text = fill(template).strip()
             texts.append(text)
-            y.append(list(label_vec))
+            labels.append(list(fmt_vec))
 
-    return texts, y
+    return texts, labels
 
+
+def load_real_examples():
+    """Load manually-labeled real examples from data/real_examples.json."""
+    if not REAL_DATA_PATH.exists():
+        print(f'[warn] No real data at {REAL_DATA_PATH}')
+        return [], [], [], []
+
+    with open(REAL_DATA_PATH, encoding='utf-8') as f:
+        data = json.load(f)
+
+    intent_texts, intent_labels = [], []
+    format_texts, format_labels = [], []
+
+    for ex in data:
+        prompt = ex.get('prompt', '').strip()
+        if not prompt:
+            continue
+        intent = ex.get('intent', 'query')
+        formats = ex.get('formats', ['inline'])
+
+        intent_texts.append(prompt)
+        intent_labels.append(intent)
+
+        fmt_vec = [1 if f in formats else 0 for f in FORMAT_LABELS]
+        format_texts.append(prompt)
+        format_labels.append(fmt_vec)
+
+    return intent_texts, intent_labels, format_texts, format_labels
+
+
+# ── Training ─────────────────────────────────────────────────────────────────
 
 def main():
     random.seed(42)
-    print("Generating synthetic training data...")
-    texts, y = generate_examples()
-    y_arr = np.array(y)
 
-    print(f"Total examples: {len(texts)}")
-    for i, label in enumerate(LABELS):
-        count = y_arr[:, i].sum()
-        print(f"  {label}: {int(count)} positive examples")
+    # ── Generate synthetic data ──
+    print('Generating synthetic data...')
+    syn_intent_texts, syn_intent_labels = generate_intent_data()
+    syn_format_texts, syn_format_labels = generate_format_data()
 
-    print("\nTraining TF-IDF + MultiOutputClassifier...")
-    vectorizer = TfidfVectorizer(ngram_range=(1, 2), max_features=5000, sublinear_tf=True)
-    X = vectorizer.fit_transform(texts)
+    # ── Load real data (weighted 5x) ──
+    real_int_t, real_int_l, real_fmt_t, real_fmt_l = load_real_examples()
+    REAL_WEIGHT = 5
+    print(f'Real examples: {len(real_int_t)} (weighted {REAL_WEIGHT}x)')
 
-    clf = MultiOutputClassifier(LogisticRegression(max_iter=1000, C=1.0, random_state=42))
-    clf.fit(X, y_arr)
+    # ── Combine intent data ──
+    all_intent_texts = syn_intent_texts + real_int_t * REAL_WEIGHT
+    all_intent_labels = syn_intent_labels + real_int_l * REAL_WEIGHT
+    print(f'Total intent examples: {len(all_intent_texts)}')
 
-    print("\nCross-validation F1 per label (5-fold):")
-    for i, label in enumerate(LABELS):
-        scores = cross_val_score(
-            LogisticRegression(max_iter=1000, C=1.0, random_state=42),
-            X, y_arr[:, i], cv=5, scoring='f1'
-        )
-        print(f"  {label}: {scores.mean():.3f} ± {scores.std():.3f}")
+    from collections import Counter
+    print('Intent distribution:', dict(Counter(all_intent_labels)))
 
-    model = {'vectorizer': vectorizer, 'classifier': clf, 'labels': LABELS}
-    out_path = Path(__file__).parent / 'models' / 'phase_a.pkl'
-    out_path.parent.mkdir(exist_ok=True)
-    with open(out_path, 'wb') as f:
+    # ── Combine format data ──
+    all_format_texts = syn_format_texts + real_fmt_t * REAL_WEIGHT
+    all_format_labels = syn_format_labels + real_fmt_l * REAL_WEIGHT
+    print(f'Total format examples: {len(all_format_texts)}')
+
+    # ── Build shared vectorizers ──
+    print('\nFitting vectorizers...')
+    # Union of all texts for fitting
+    all_texts = list(set(all_intent_texts + all_format_texts))
+
+    word_vec = TfidfVectorizer(
+        ngram_range=(1, 2),
+        max_features=5000,
+        sublinear_tf=True,
+        analyzer='word',
+    )
+    word_vec.fit(all_texts)
+
+    char_vec = TfidfVectorizer(
+        ngram_range=(3, 5),
+        max_features=3000,
+        sublinear_tf=True,
+        analyzer='char_wb',
+    )
+    char_vec.fit(all_texts)
+
+    # ── Train intent classifier ──
+    print('\nTraining intent classifier...')
+    X_int_word = word_vec.transform(all_intent_texts)
+    X_int_char = char_vec.transform(all_intent_texts)
+    X_int_hand = csr_matrix(np.array([extract_hand_features(t) for t in all_intent_texts]))
+    X_intent = hstack([X_int_word, X_int_char, X_int_hand])
+
+    # Encode intent labels as integers
+    intent_label_map = {l: i for i, l in enumerate(INTENT_LABELS)}
+    y_intent = np.array([intent_label_map[l] for l in all_intent_labels])
+
+    intent_clf = LogisticRegression(
+        max_iter=1000, C=1.0, random_state=42,
+        solver='lbfgs',
+    )
+    intent_clf.fit(X_intent, y_intent)
+
+    print('Intent cross-val accuracy (5-fold):')
+    scores = cross_val_score(
+        LogisticRegression(max_iter=1000, C=1.0, random_state=42,
+                           solver='lbfgs'),
+        X_intent, y_intent, cv=5, scoring='accuracy',
+    )
+    print(f'  {scores.mean():.3f} +/- {scores.std():.3f}')
+
+    # ── Train format classifier ──
+    print('\nTraining format classifier...')
+    X_fmt_word = word_vec.transform(all_format_texts)
+    X_fmt_char = char_vec.transform(all_format_texts)
+    X_fmt_hand = csr_matrix(np.array([extract_hand_features(t) for t in all_format_texts]))
+    X_format = hstack([X_fmt_word, X_fmt_char, X_fmt_hand])
+    y_format = np.array(all_format_labels)
+
+    format_clf = MultiOutputClassifier(
+        LogisticRegression(max_iter=1000, C=1.0, random_state=42),
+    )
+    format_clf.fit(X_format, y_format)
+
+    print('Format cross-val F1 per label (5-fold):')
+    for i, label in enumerate(FORMAT_LABELS):
+        try:
+            s = cross_val_score(
+                LogisticRegression(max_iter=1000, C=1.0, random_state=42),
+                X_format, y_format[:, i], cv=5, scoring='f1',
+            )
+            print(f'  {label}: {s.mean():.3f} +/- {s.std():.3f}')
+        except Exception as e:
+            print(f'  {label}: skip ({e})')
+
+    # ── Save model ──
+    MODEL_OUT.parent.mkdir(exist_ok=True)
+    model = {
+        'word_vectorizer': word_vec,
+        'char_vectorizer': char_vec,
+        'intent_classifier': intent_clf,
+        'format_classifier': format_clf,
+        'intent_labels': INTENT_LABELS,
+        'format_labels': FORMAT_LABELS,
+        'hand_feature_names': HAND_FEATURE_NAMES,
+    }
+    with open(MODEL_OUT, 'wb') as f:
         pickle.dump(model, f)
-    print(f"\nModel saved to {out_path}")
+    print(f'\nModel saved to {MODEL_OUT} ({MODEL_OUT.stat().st_size / 1024:.0f} KB)')
 
-    # Quick smoke test
+    # ── Smoke tests ──
+    print('\n=== Smoke Tests ===')
     test_cases = [
-        ("explain machine learning", ["text"]),
-        ("draw me a cat", ["picture"]),
-        ("open Chrome", ["command"]),
-        ("create a presentation about React", ["presentation"]),
-        ("write a Python script and save as script.py", ["command", "specificFile"]),
-        ("tell me a joke", ["other"]),
+        ("Yo", "converse", ["inline"]),
+        ("Whats on my gmail", "query", ["browser"]),
+        ("Send an email to Adam", "action", ["browser"]),
+        ("Create a presentation about React", "create", ["slides"]),
+        ("From now on only use gmail", "instruct", ["inline"]),
+        ("Push to github", "action", ["inline"]),
+        ("Draw me a picture of a cat", "create", ["image"]),
+        ("Write a Python script for sorting", "create", ["file"]),
+        ("Tell me a joke", "converse", ["inline"]),
+        ("Continue your work", "action", ["inline"]),
+        ("Yes", "converse", ["inline"]),
+        ("Whats on my Google tasks today", "query", ["browser"]),
+        ("Add a call for mia tomorrow to my gcal", "action", ["browser"]),
+        ("From now on teach yourself to prioritize the faster options", "instruct", ["inline"]),
+        ("Check my canvas for assignments", "query", ["browser"]),
     ]
-    print("\nSmoke tests:")
-    for prompt, expected in test_cases:
-        X_test = vectorizer.transform([prompt])
-        preds = clf.predict(X_test)[0]
-        predicted = [LABELS[i] for i, v in enumerate(preds) if v]
-        ok = "OK" if any(e in predicted for e in expected) else "FAIL"
-        print(f"  [{ok}] '{prompt}' -> {predicted} (expected: {expected})")
+
+    passed = 0
+    for prompt, exp_intent, exp_formats in test_cases:
+        X_w = word_vec.transform([prompt])
+        X_c = char_vec.transform([prompt])
+        X_h = csr_matrix(np.array([extract_hand_features(prompt)]))
+        X = hstack([X_w, X_c, X_h])
+
+        pred_intent_idx = intent_clf.predict(X)[0]
+        pred_intent = INTENT_LABELS[pred_intent_idx]
+
+        pred_format_probs = format_clf.predict_proba(X)
+        pred_formats = [FORMAT_LABELS[i] for i in range(len(FORMAT_LABELS))
+                        if pred_format_probs[i][0][1] >= 0.38]
+        if not pred_formats:
+            best_i = max(range(len(FORMAT_LABELS)),
+                         key=lambda i: pred_format_probs[i][0][1])
+            pred_formats = [FORMAT_LABELS[best_i]]
+
+        intent_ok = pred_intent == exp_intent
+        format_ok = all(f in pred_formats for f in exp_formats)
+        ok = intent_ok and format_ok
+        if ok:
+            passed += 1
+
+        status = 'OK' if ok else 'FAIL'
+        print(f'  [{status}] "{prompt[:50]}"')
+        if not ok:
+            if not intent_ok:
+                print(f'         intent: got={pred_intent}, expected={exp_intent}')
+            if not format_ok:
+                print(f'         format: got={pred_formats}, expected={exp_formats}')
+
+    print(f'\n{passed}/{len(test_cases)} smoke tests passed')
 
 
 if __name__ == '__main__':

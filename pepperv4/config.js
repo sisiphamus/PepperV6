@@ -31,7 +31,7 @@ const defaults = {
   smsGatewayPassword: '',
   smsAllowedNumbers: [],
   smsPrefix: '',
-  outputDirectory: join(__dirname, '..', 'bot', 'outputs'),
+  outputDirectory: join(__dirname, '..', 'pepperv1', 'backend', 'bot', 'outputs'),
 };
 
 function loadConfig() {

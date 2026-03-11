@@ -14,19 +14,21 @@ ${prompt}
 ## Task Type
 ${outputSpec.outputType} (${outputSpec.complexity})
 
-## Execution Summary
+## Final Response Summary
 ${executionSummary}
 
 ## Existing Memories
 ${memoryList || '(none)'}
 
 ## Instructions
-Review the execution and determine:
-1. Were there any hard-won insights (workarounds, gotchas, patterns) worth remembering?
-2. Did we interact with a website/app in a way worth documenting as site context?
-3. Did we discover user preferences that should be remembered?
-4. Could a new skill be created from this experience?
-5. Review the tool calls and for complex tasks consider how it was eventually solved, for websites update the file with this knowledge
+You have the full execution trace in the user prompt (TOOL_USE, TOOL_RESULT, ASSISTANT lines). Use it to:
+1. **Identify what worked** — which tool/method succeeded? What was the exact call pattern?
+2. **Identify what failed** — which tools errored? What was the error? What did the executor switch to?
+3. **Site patterns** — if a website/API was used, what URL, JS state path, or tool call pattern worked?
+4. **User preferences discovered** — any new preference revealed by this task?
+5. **New reusable skill** — if the task took many steps to figure out, encode the working approach as a skill
+
+Focus on the tool calls, not the prose. The trace is the ground truth.
 
 Only create updates if they would genuinely be useful for future tasks. Do NOT create memories for:
 - One-off facts unlikely to recur

@@ -18,12 +18,20 @@ import { mkdirSync } from 'fs';
 const MAX_FEEDBACK_LOOPS = 3;
 
 const FAILURE_PATTERNS = [
-  /i (?:can'?t|cannot|am unable to|don'?t have (?:the ability|access)|am not able to)/i,
+  /i (?:can'?t|cannot|am unable to|don'?t have (?:the ability|access)|am not able to) (?:do|perform|complete|accomplish|execute|help with)/i,
   /(?:unfortunately|sorry),? (?:i |this )?(?:can'?t|cannot|isn'?t possible|is not possible|won'?t work)/i,
   /i don'?t (?:know how|have (?:enough|the (?:tools|knowledge|capability)))/i,
   /(?:beyond|outside) (?:my|the) (?:capabilities|scope|ability)/i,
-  /not (?:currently )?(?:able|possible|supported)/i,
+  /(?:not (?:currently )?(?:able|possible|supported)) (?:to|for|in|with)/i,
   /i'?m (?:afraid|sorry) (?:i |that )?(?:can'?t|cannot)/i,
+];
+
+// Phrases that indicate a non-failure even if they contain "can't"-like words
+const FALSE_POSITIVE_PATTERNS = [
+  /(?:can'?t|cannot|couldn'?t) find (?:any|the|unread|new|recent)/i,
+  /no (?:new |unread )?(?:emails|messages|tasks|assignments|notifications)/i,
+  /inbox is (?:empty|clean|clear)/i,
+  /nothing (?:new|due|pending|found)/i,
 ];
 
 const SUCCESS_PATTERNS = [
@@ -42,6 +50,11 @@ function detectFailure(response) {
   if (trimmed.length < 20 && SUCCESS_PATTERNS.some(p => p.test(trimmed))) return false;
   // Truly empty/meaningless responses are failures
   if (trimmed.length < 3) return true;
+  // Check for false positives first — these look like failures but aren't
+  if (FALSE_POSITIVE_PATTERNS.some(p => p.test(response))) return false;
+  // Long responses (>500 chars) with detailed content are likely successful completions
+  // that happen to contain hedging language — only flag short failures
+  if (trimmed.length > 500) return false;
   return FAILURE_PATTERNS.some(p => p.test(response));
 }
 
@@ -91,7 +104,7 @@ export async function runPipeline(prompt, { onProgress, processKey, timeout, res
       }
 
       // Fire-and-forget learning
-      learnInBackground(prompt, { taskDescription: prompt }, phaseD.response, onProgress, processKey, timeout);
+      learnInBackground(prompt, { taskDescription: prompt }, phaseD.response, phaseD.fullEvents, onProgress, processKey, timeout);
 
       return {
         status: 'completed',
@@ -102,17 +115,18 @@ export async function runPipeline(prompt, { onProgress, processKey, timeout, res
     }
   }
 
-  // ── Phase A: Output type classifier (local ML) ──
+  // ── Phase A: Dual-axis classifier (local ML) ──
   agg.phase('A', 'Classifying request (local ML)');
   const phaseAResponse = await runPhaseA(prompt);
   const outputSpec = parseOutputSpec(phaseAResponse);
+  const intent = outputSpec.intent || 'query';
   const activeLabels = outputSpec.outputLabels
     ? Object.entries(outputSpec.outputLabels).filter(([, v]) => v).map(([k]) => k).join(', ') || 'none'
     : outputSpec.outputType || 'text';
   const scoreStr = outputSpec.outputScores
     ? ' | scores: ' + Object.entries(outputSpec.outputScores).map(([k, v]) => `${k}=${v}`).join(' ')
     : '';
-  agg.phase('A', `Complete → [${activeLabels}]${scoreStr}`);
+  agg.phase('A', `Complete → intent=${intent} formats=[${activeLabels}]${scoreStr}`);
 
   // ── Feedback loop: A → B → C? → D, max 3 iterations ──
   let loopCount = 0;
@@ -132,7 +146,8 @@ export async function runPipeline(prompt, { onProgress, processKey, timeout, res
     const inventory = getFullInventory();
     const phaseBResponse = await runPhaseB(
       previousFailure ? `${prompt}\n\nPrevious failure context: ${previousFailure.slice(0, 500)}` : prompt,
-      inventory
+      inventory,
+      intent
     );
     const audit = parseAuditResult(phaseBResponse);
     const selectedSummary = (audit.selectedMemories || [])
@@ -206,18 +221,15 @@ export async function runPipeline(prompt, { onProgress, processKey, timeout, res
     // Add C's memories directly (they have name, category, content already)
     const newContents = newlyCreatedMemories.map(m => ({ name: m.name, category: m.category, content: m.content }));
 
-    // Add site context detected from the prompt
-    const siteContext = detectSiteContext(prompt);
+    // Add site context detected from the prompt (deduplicate against Phase B selections)
+    const selectedNames = new Set((audit.selectedMemories || []).map(m => m.name));
+    const siteContext = detectSiteContext(prompt).filter(s => !selectedNames.has(s.name));
     const allMemoryContents = [...selectedContents, ...newContents, ...siteContext];
 
-    // If the task involves browser skills, launch the correct Chrome (AutomationProfile)
-    // and wait for it to be ready before Phase D starts.
-    const needsBrowser = allMemoryContents.some(m =>
-      m.category === 'skill' && (m.name === 'browser_use' || m.name === 'chrome_use')
-    ) || /\b(browser|navigate|gmail|website|chrome|web|email|linkedin|url|http)\b/i.test(prompt);
-    if (needsBrowser) {
-      await ensureBrowserReady();
-    }
+    // Always ensure the correct Chrome (AutomationProfile + CDP) is running before Phase D.
+    // Fast no-op if Chrome is already up. Prevents model D from ever seeing "CDP not available"
+    // and attempting to launch Chrome with wrong flags (missing --user-data-dir=AutomationProfile).
+    await ensureBrowserReady();
     if (genomeOverride) {
       allMemoryContents.unshift({ name: 'agent-genome', category: 'evolution', content: genomeOverride });
     }
@@ -266,9 +278,8 @@ export async function runPipeline(prompt, { onProgress, processKey, timeout, res
       // Bypass B entirely — inject a precise missingMemories entry so C researches exactly what's needed
       audit.missingMemories = [buildToolMemoryRequest(toolsNeeded)];
       previousFailure = lastDResponse;
-      // Skip directly to C by re-entering the loop at the right point
-      loopCount++;
-      if (loopCount <= MAX_FEEDBACK_LOOPS) {
+      // Skip directly to C (loopCount was already incremented at top of while loop — don't double-increment)
+      if (loopCount < MAX_FEEDBACK_LOOPS) {
         agg.phase('C', `Creating 1 new memory file(s) for: ${toolsNeeded}`);
         const phaseC2 = await runModel({
           userPrompt: `Create the following memories:\n- ${audit.missingMemories[0].name}: ${audit.missingMemories[0].description}`,
@@ -292,6 +303,7 @@ export async function runPipeline(prompt, { onProgress, processKey, timeout, res
         }
         // Re-run D with the new memory
         const updatedContents = [...getContents(audit.selectedMemories || []), ...newlyCreatedMemories.map(m => ({ name: m.name, category: m.category, content: m.content })), ...detectSiteContext(prompt)];
+        await ensureBrowserReady();
         const phaseD2 = await runModel({
           userPrompt: prompt,
           systemPrompt: modelDPrompt(prompt, outputSpec, updatedContents),
@@ -323,7 +335,7 @@ export async function runPipeline(prompt, { onProgress, processKey, timeout, res
   }
 
   // ── Post-task learning (fire-and-forget) ──
-  if (!skipLearning) learnInBackground(prompt, outputSpec, lastDResponse, onProgress, processKey, timeout);
+  if (!skipLearning) learnInBackground(prompt, outputSpec, lastDResponse, lastDFullEvents, onProgress, processKey, timeout);
 
   return {
     status: 'completed',
@@ -385,7 +397,7 @@ async function tryInstallFromMemory(mem, onProgress) {
   }
 }
 
-function learnInBackground(prompt, outputSpec, executionResponse, onProgress, processKey, timeout) {
+function learnInBackground(prompt, outputSpec, executionResponse, fullEvents, onProgress, processKey, timeout) {
   const agg = createAggregator(onProgress);
 
   // Don't await — fire and forget
@@ -394,9 +406,31 @@ function learnInBackground(prompt, outputSpec, executionResponse, onProgress, pr
       agg.phase('learn', 'Reviewing execution for learnings');
 
       const inventory = getFullInventory();
+
+      // Build a compact execution trace from fullEvents: tool calls + results + assistant text
+      let executionTrace = '';
+      if (Array.isArray(fullEvents)) {
+        const traceLines = [];
+        for (const ev of fullEvents) {
+          if (ev.type === 'tool_use') {
+            traceLines.push(`TOOL_USE: ${ev.tool} ${JSON.stringify(ev.input || {}).slice(0, 200)}`);
+          } else if (ev.type === 'tool_result') {
+            const out = typeof ev.output === 'string' ? ev.output : JSON.stringify(ev.output || '');
+            traceLines.push(`TOOL_RESULT: ${out.slice(0, 300)}`);
+          } else if (ev.type === 'assistant_text' && ev.text) {
+            traceLines.push(`ASSISTANT: ${ev.text.slice(0, 300)}`);
+          } else if (ev.type === 'stderr' && ev.text) {
+            traceLines.push(`STDERR: ${ev.text.slice(0, 200)}`);
+          }
+        }
+        executionTrace = traceLines.join('\n');
+      }
+      // Cap trace at 8000 chars, prefer tail (most recent events are most informative)
+      if (executionTrace.length > 8000) executionTrace = '...(truncated)\n' + executionTrace.slice(-8000);
+
       const result = await runModel({
-        userPrompt: `Review this execution and save any useful knowledge.\n\nPrompt: ${prompt}\n\nResponse summary: ${(executionResponse || '').slice(0, 2000)}`,
-        systemPrompt: learnerPrompt(prompt, outputSpec, (executionResponse || '').slice(0, 3000), inventory),
+        userPrompt: `Review this execution and save any useful knowledge.\n\nPrompt: ${prompt}\n\nFinal response: ${(executionResponse || '').slice(0, 1000)}\n\nExecution trace:\n${executionTrace}`,
+        systemPrompt: learnerPrompt(prompt, outputSpec, (executionResponse || '').slice(0, 2000), inventory),
         model: 'sonnet',
         onProgress: (type, data) => agg.forward('learner', type, data),
         processKey: processKey ? `${processKey}:learner` : null,
@@ -404,17 +438,25 @@ function learnInBackground(prompt, outputSpec, executionResponse, onProgress, pr
       });
 
       const learnerResult = parseLearnerResult(result.response);
+      if (!learnerResult.updates || learnerResult.updates.length === 0) {
+        process.stderr.write(`[learner] No updates extracted from learner response (length=${(result.response || '').length})\n`);
+      }
       for (const update of learnerResult.updates) {
         try {
           if (update.path && update.action === 'append') {
             await updateMemory(update.path, 'append', update.content);
+            process.stderr.write(`[learner] Appended to ${update.path}\n`);
           } else {
             await writeMemory(update.name, update.category, update.content);
+            process.stderr.write(`[learner] Wrote memory: ${update.name} (${update.category})\n`);
           }
-        } catch {}
+        } catch (err) {
+          process.stderr.write(`[learner] Failed to write memory ${update.name || update.path}: ${err.message}\n`);
+        }
       }
-    } catch {
-      // Non-fatal — learning is best-effort
+    } catch (err) {
+      // Non-fatal — learning is best-effort, but log the error for diagnostics
+      process.stderr.write(`[learner] Learning failed: ${err.message}\n`);
     }
   })();
 }

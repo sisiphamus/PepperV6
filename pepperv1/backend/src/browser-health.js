@@ -66,46 +66,6 @@ function isCdpReachable(port) {
  * Patches browser shortcuts to permanently include --remote-debugging-port.
  * Used only for non-Chrome browsers. Safe to call repeatedly.
  */
-function patchShortcuts(browserName, cdpPort, userDataDir) {
-  return new Promise((resolve) => {
-    const args = `--remote-debugging-port=${cdpPort} --user-data-dir="${userDataDir}"`;
-    const isEdge = /edge/i.test(browserName);
-    const shortcutName = isEdge ? 'Microsoft Edge' : browserName;
-    const script = `
-$args = '${args}'
-$shortcuts = @(
-  "$env:USERPROFILE\\Desktop\\${shortcutName}.lnk",
-  "$env:APPDATA\\Microsoft\\Windows\\Start Menu\\Programs\\${shortcutName}.lnk",
-  "C:\\ProgramData\\Microsoft\\Windows\\Start Menu\\Programs\\${shortcutName}.lnk"
-)
-foreach ($path in $shortcuts) {
-  if (-not (Test-Path $path)) { continue }
-  try {
-    $sh = New-Object -ComObject WScript.Shell
-    $lnk = $sh.CreateShortcut($path)
-    $lnk.Arguments = $args
-    $lnk.Save()
-    Write-Host "Patched: $path"
-  } catch { Write-Host "Skip (no access): $path" }
-}`;
-    execFile('powershell.exe', ['-NoProfile', '-Command', script], { timeout: 10000 }, (err, stdout) => {
-      if (stdout) stdout.trim().split('\n').forEach(l => l.trim() && console.log(`  [BrowserHealth] ${l.trim()}`));
-      if (err) console.warn(`  [BrowserHealth] Shortcut patch warning: ${err.message}`);
-      resolve();
-    });
-  });
-}
-
-/** Returns true if the given process name is currently running. */
-function isProcessRunning(processName) {
-  return new Promise((resolve) => {
-    const tasklist = `${process.env.SystemRoot || 'C:\\Windows'}\\System32\\tasklist.exe`;
-    execFile(tasklist, ['/FI', `IMAGENAME eq ${processName}`, '/NH'], { shell: false }, (err, stdout) => {
-      resolve(!err && stdout.toLowerCase().includes(processName.toLowerCase()));
-    });
-  });
-}
-
 /**
  * Launches a browser with CDP flag via PowerShell Start-Process.
  * Uses PowerShell because execFile detached is unreliable on Windows.
@@ -123,7 +83,7 @@ function openBrowser(executablePath, cdpPort, userDataDir, profileDir, firstRun 
       // On first run, open Google sign-in directly instead of showing extension popups
       ...(firstRun ? [`https://accounts.google.com/`] : []),
     ].join("','");
-    const script = `Start-Process '${executablePath}' -ArgumentList '${args}'`;
+    const script = `Start-Process '${executablePath}' -ArgumentList '${args}' -WindowStyle Minimized`;
     execFile('powershell.exe', ['-NoProfile', '-Command', script], { timeout: 5000 }, () => {});
 
     let attempts = 0;
@@ -175,17 +135,9 @@ export async function ensureBrowserReady() {
     return;
   }
 
-  // Permanently patch shortcuts so future launches always have CDP
-  await patchShortcuts(preferredBrowser, cdpPort, userDataDir);
-
-  const processName = executablePath.split('\\').pop();
-  const running = await isProcessRunning(processName);
-  if (running) {
-    console.warn(`  [BrowserHealth] ${preferredBrowser} is running WITHOUT CDP on port ${cdpPort}.`);
-    console.warn(`  [BrowserHealth] Shortcuts have been patched. Please restart ${preferredBrowser} manually`);
-    console.warn(`  [BrowserHealth] to enable CDP. Browser tasks will not work until then.`);
-    return;
-  }
+  // Note: we do NOT check if chrome.exe is already running and bail out.
+  // The user's regular Chrome may be open, but AutomationProfile uses a separate
+  // --user-data-dir so a second Chrome instance can run alongside it fine.
 
   // Detect first run: no account signed in yet in the AutomationProfile
   let firstRun = false;

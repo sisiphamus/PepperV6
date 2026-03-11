@@ -18,6 +18,9 @@ function readFirstLine(filepath) {
     // Try YAML frontmatter description
     const descMatch = content.match(/^---[\s\S]*?description:\s*(.+)/m);
     if (descMatch) return descMatch[1].trim();
+    // Try "When to use" section (common in skill files)
+    const whenMatch = content.match(/##\s*When\s+to\s+[Uu]se\s*\n([\s\S]*?)(?=\n##|\Z)/);
+    if (whenMatch) return whenMatch[1].trim().split('\n')[0].slice(0, 150);
     // Try first heading
     const headingMatch = content.match(/^#\s+(.+)/m);
     if (headingMatch) return headingMatch[1].trim();

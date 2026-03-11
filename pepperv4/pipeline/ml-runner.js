@@ -9,7 +9,7 @@ import { fileURLToPath } from 'url';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const INFER_SCRIPT = join(__dirname, '../ml/infer.py');
 const PYTHON = process.env.PEPPER_PYTHON || 'python';
-const CALL_TIMEOUT_MS = 10000;
+const CALL_TIMEOUT_MS = 15000;
 const POOL_SIZE = 2;
 
 class MLWorker {
@@ -24,6 +24,7 @@ class MLWorker {
       stdio: ['pipe', 'pipe', 'pipe'],
       shell: false,
     });
+    this.ready = false;
 
     this.proc.stdout.on('data', chunk => {
       this.stdoutBuffer += chunk.toString();
@@ -47,7 +48,12 @@ class MLWorker {
     });
 
     this.proc.stderr.on('data', chunk => {
-      process.stderr.write(`[ml-runner] ${chunk}`);
+      const msg = chunk.toString();
+      process.stderr.write(`[ml-runner] ${msg}`);
+      // Detect readiness signal from infer.py
+      if (msg.includes('Ready')) {
+        this.ready = true;
+      }
     });
 
     this.proc.on('close', code => {
@@ -121,7 +127,7 @@ function getWorker() {
 // ── Public API ──────────────────────────────────────────────────────────────
 
 /**
- * Phase A: classify the prompt into output type labels.
+ * Phase A: dual-axis classifier (intent + format).
  * Returns a JSON string compatible with parseOutputSpec().
  */
 export async function runPhaseA(prompt) {
@@ -129,28 +135,33 @@ export async function runPhaseA(prompt) {
     const result = await getWorker().call({ task: 'phase_a', prompt });
     return JSON.stringify(result);
   } catch (err) {
-    process.stderr.write(`[ml-runner] Phase A error: ${err.message}\n`);
-    // Return a safe fallback that parseOutputSpec can handle
+    process.stderr.write(`[ml-runner] Phase A FALLBACK triggered (ML subprocess failed): ${err.message}\n`);
+    process.stderr.write(`[ml-runner] Prompt that caused fallback: "${(prompt || '').slice(0, 100)}"\n`);
     return JSON.stringify({
       taskDescription: (prompt || '').slice(0, 500),
+      intent: 'query',
+      intentScores: {},
       outputType: 'text',
-      outputLabels: { text: true, picture: false, command: false, presentation: false, specificFile: false, other: false },
+      outputLabels: { inline: true, file: false, image: false, slides: false, browser: false },
+      outputScores: {},
       outputFormat: { type: 'inline_text', structure: 'direct answer', deliveryMethod: 'inline' },
       requiredDomains: [],
       complexity: 'simple',
       estimatedSteps: 1,
+      _fallback: true,
     });
   }
 }
 
 /**
- * Phase B: retrieve relevant memory files via TF-IDF cosine similarity.
+ * Phase B: tiered memory retrieval.
  * inventory is the array from getFullInventory().
+ * intent is the Phase A intent label (used to skip tiers for converse/instruct).
  * Returns a JSON string compatible with parseAuditResult().
  */
-export async function runPhaseB(prompt, inventory) {
+export async function runPhaseB(prompt, inventory, intent = 'query') {
   try {
-    const result = await getWorker().call({ task: 'phase_b', prompt, inventory });
+    const result = await getWorker().call({ task: 'phase_b', prompt, inventory, intent });
     return JSON.stringify(result);
   } catch (err) {
     process.stderr.write(`[ml-runner] Phase B error: ${err.message}\n`);

@@ -9,6 +9,7 @@ import { writeFileSync, mkdirSync, readdirSync, unlinkSync, readFileSync, exists
 import { join, dirname, basename } from 'path';
 import { fileURLToPath } from 'url';
 import { randomBytes } from 'crypto';
+import { execFileSync } from 'child_process';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const LOGS_DIR = join(__dirname, '..', '..', 'bot', 'logs');
@@ -67,18 +68,19 @@ function setSocketIO(socketIO) {
 function getQueueKey(update) {
   const msg = update.message;
   const hasPhoto = !!(msg?.photo?.length);
-  if (!msg?.text && !msg?.caption && !hasPhoto) return null;
+  const hasVoice = !!(msg?.voice || msg?.audio);
+  if (!msg?.text && !msg?.caption && !hasPhoto && !hasVoice) return null;
 
   let prompt = msg.text || msg.caption || '';
   if (config.telegramPrefix && prompt.startsWith(config.telegramPrefix)) {
     prompt = prompt.slice(config.telegramPrefix.length).trim();
-  } else if (config.telegramPrefix && !hasPhoto) {
-    return null; // prefix configured but message doesn't match (allow photos through)
+  } else if (config.telegramPrefix && !hasPhoto && !hasVoice) {
+    return null; // prefix configured but message doesn't match (allow photos/voice through)
   }
 
-  if (!prompt && !hasPhoto) return null;
+  if (!prompt && !hasPhoto && !hasVoice) return null;
 
-  const parsed = parseMessage(prompt || 'What is this image?');
+  const parsed = parseMessage(prompt || (hasVoice ? 'Voice message' : 'What is this image?'));
   if (parsed.number !== null) {
     return `conv:${parsed.number}`;
   }
@@ -111,6 +113,86 @@ async function downloadTelegramPhoto(msg, imageDir) {
     return filepath;
   } catch (err) {
     console.log('[telegram:image_download_error]', err.message);
+    return null;
+  }
+}
+
+/**
+ * Downloads a voice message from Telegram and saves as .ogg to short-term memory.
+ * Returns the file path or null.
+ */
+async function downloadTelegramVoice(msg, voiceDir) {
+  const voice = msg.voice || msg.audio;
+  if (!voice) return null;
+
+  const dir = voiceDir || SHORT_TERM_DIR;
+  try {
+    const fileInfo = await apiCall('getFile', { file_id: voice.file_id });
+    if (!fileInfo.ok) return null;
+
+    const fileUrl = `https://api.telegram.org/file/bot${config.telegramToken}/${fileInfo.result.file_path}`;
+    const resp = await fetch(fileUrl);
+    if (!resp.ok) return null;
+
+    const buffer = Buffer.from(await resp.arrayBuffer());
+    mkdirSync(dir, { recursive: true });
+    const ext = voice.mime_type?.includes('ogg') ? 'ogg' : 'oga';
+    const filename = `tg_voice_${randomBytes(4).toString('hex')}.${ext}`;
+    const filepath = join(dir, filename);
+    writeFileSync(filepath, buffer);
+    return filepath;
+  } catch (err) {
+    console.log('[telegram:voice_download_error]', err.message);
+    return null;
+  }
+}
+
+/**
+ * Transcribes a voice file using OpenAI Whisper CLI.
+ * Converts to WAV via ffmpeg first, then runs whisper.
+ * Returns the transcribed text or null.
+ */
+function transcribeVoice(voicePath) {
+  try {
+    const dir = dirname(voicePath);
+    const wavName = basename(voicePath).replace(/\.[^.]+$/, '.wav');
+    const wavPath = join(dir, wavName);
+
+    // Convert OGG/OGA to WAV (16kHz mono, optimal for Whisper)
+    execFileSync('ffmpeg', ['-i', voicePath, '-ar', '16000', '-ac', '1', '-y', wavPath], {
+      timeout: 30000,
+      stdio: 'pipe',
+    });
+
+    // Run Whisper (base model, English, plain text output)
+    const result = execFileSync('whisper', [
+      wavPath,
+      '--model', 'base',
+      '--language', 'en',
+      '--output_format', 'txt',
+      '--output_dir', dir,
+    ], {
+      timeout: 120000,
+      stdio: 'pipe',
+      encoding: 'utf-8',
+      env: { ...process.env, PYTHONIOENCODING: 'utf-8' },
+    });
+
+    // Whisper writes <filename>.txt next to the input
+    const txtPath = wavPath.replace(/\.wav$/, '.txt');
+    if (existsSync(txtPath)) {
+      const text = readFileSync(txtPath, 'utf-8').trim();
+      // Cleanup temp files
+      try { unlinkSync(wavPath); } catch {}
+      try { unlinkSync(txtPath); } catch {}
+      return text || null;
+    }
+
+    // Fallback: parse stdout
+    const lines = (result || '').split('\n').filter(l => l.trim());
+    return lines.join(' ').trim() || null;
+  } catch (err) {
+    console.log('[telegram:transcribe_error]', err.message);
     return null;
   }
 }
@@ -296,7 +378,8 @@ function handleUpdate(update) {
 async function processUpdate(update) {
   const msg = update.message;
   const hasPhoto = !!(msg?.photo?.length);
-  if (!msg?.text && !msg?.caption && !hasPhoto) return;
+  const hasVoice = !!(msg?.voice || msg?.audio);
+  if (!msg?.text && !msg?.caption && !hasPhoto && !hasVoice) return;
 
   const chatId = msg.chat.id;
   const sender = msg.from.first_name || msg.from.username || String(chatId);
@@ -323,11 +406,11 @@ async function processUpdate(update) {
   let prompt = text;
   if (config.telegramPrefix && text.startsWith(config.telegramPrefix)) {
     prompt = text.slice(config.telegramPrefix.length).trim();
-  } else if (config.telegramPrefix && !hasPhoto) {
-    return; // Has prefix configured but message doesn't match (allow photos through)
+  } else if (config.telegramPrefix && !hasPhoto && !hasVoice) {
+    return; // Has prefix configured but message doesn't match (allow photos/voice through)
   }
 
-  if (!prompt && !hasPhoto) return;
+  if (!prompt && !hasPhoto && !hasVoice) return;
 
   // Check for /new command to force a fresh session
   if (prompt && prompt.toLowerCase() === '/new') {
@@ -339,7 +422,7 @@ async function processUpdate(update) {
   }
 
   // Parse for numbered conversation prefix
-  const parsed = parseMessage(prompt || 'What is this image?');
+  const parsed = parseMessage(prompt || (hasVoice ? 'Voice message' : 'What is this image?'));
 
   // Handle close command
   if (parsed.command === 'close') {
@@ -380,6 +463,29 @@ async function processUpdate(update) {
       const caption = finalPrompt || 'What is this image?';
       finalPrompt = `[The user sent an image. Read it with your Read tool at: ${imagePath}]\n\n${caption}`;
       emitLog('image', { sender, processKey, path: imagePath });
+    }
+  }
+
+  // Download and transcribe voice message if present
+  if (hasVoice) {
+    await sendMessage(chatId, 'Transcribing voice message...');
+    const voicePath = await downloadTelegramVoice(msg, session.shortTermDir);
+    if (voicePath) {
+      emitLog('voice', { sender, processKey, path: voicePath });
+      const transcript = transcribeVoice(voicePath);
+      if (transcript) {
+        const caption = finalPrompt ? `${finalPrompt}\n\n` : '';
+        finalPrompt = `${caption}[Voice message transcription]: ${transcript}`;
+        emitLog('voice_transcribed', { sender, processKey, transcript });
+      } else {
+        await sendMessage(chatId, 'Could not transcribe voice message. Try sending text instead.');
+        return;
+      }
+      // Clean up the original voice file
+      try { unlinkSync(voicePath); } catch {}
+    } else {
+      await sendMessage(chatId, 'Could not download voice message. Try again.');
+      return;
     }
   }
 

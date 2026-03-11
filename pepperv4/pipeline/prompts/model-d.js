@@ -3,6 +3,47 @@
 
 import { config } from '../../config.js';
 
+const INTENT_DESCRIPTIONS = {
+  query: 'The user is asking a **question** — retrieve information and answer it.',
+  action: 'The user wants you to **DO something** — take action, not explain.',
+  create: 'The user wants you to **create/produce** something — a file, document, or artifact.',
+  converse: 'The user is making **casual conversation** — respond naturally and briefly.',
+  instruct: 'The user is giving you a **standing instruction** — acknowledge and remember it.',
+};
+
+function _renderClassification(spec) {
+  const lines = [];
+
+  // Intent
+  const intent = spec.intent || 'query';
+  lines.push(`**Intent**: \`${intent}\` — ${INTENT_DESCRIPTIONS[intent] || 'Execute the task.'}`);
+
+  // Active output formats
+  const activeFormats = spec.outputLabels
+    ? Object.entries(spec.outputLabels).filter(([, v]) => v).map(([k]) => k)
+    : [];
+  if (activeFormats.length > 0) {
+    lines.push(`**Output formats**: ${activeFormats.join(', ')}`);
+  }
+
+  // Complexity & steps
+  if (spec.complexity) {
+    lines.push(`**Complexity**: ${spec.complexity} (~${spec.estimatedSteps || 1} steps)`);
+  }
+
+  // Required domains
+  if (spec.requiredDomains && spec.requiredDomains.length > 0) {
+    lines.push(`**Domains**: ${spec.requiredDomains.join(', ')}`);
+  }
+
+  // Output format details
+  if (spec.outputFormat) {
+    lines.push(`**Delivery**: ${spec.outputFormat.deliveryMethod || 'inline'} (${spec.outputFormat.type || 'inline_text'})`);
+  }
+
+  return lines.join('\n');
+}
+
 export function buildPrompt(prompt, outputSpec, memoryContents) {
   const memorySections = memoryContents
     .map(m => `### [${m.category}] ${m.name}\n${m.content}`)
@@ -21,8 +62,8 @@ The user is NOT at their laptop. They are sending messages remotely (phone, etc)
 - Never ask for permission this means bash and it means using browser, email, and more, just do it.
 - You ruthlessly worl to solve the problem but if you get stuck take a step back, review the users message and consider what you may be missing. Being ruthless means trying 1 million different ways to solve it, being stupid means repeatedly trying the same thing.
 
-## Output Specification
-${JSON.stringify(outputSpec, null, 2)}
+## Task Classification
+${_renderClassification(outputSpec)}
 
 **IMPORTANT**: The output spec describes the *format* of your response, NOT whether to act or explain.
 If the user's request contains action verbs (send, open, do, make, create, navigate, click, etc.) — **DO IT**.
